@@ -665,23 +665,38 @@ class Simulation:
         """
         Attempt to spawn an agent from origin to destination.
         Returns True if spawned, False if queued virtually or denied.
+
+        Route construction:
+          [inbound_terminal_link, interior_links..., outbound_terminal_link]
+        Agent appears at position 0 on the inbound terminal link, outside
+        the grid perimeter. Exits at the end of the outbound terminal link.
         """
         if not self._source_has_room(origin_id):
-            # Source is physically occupied; queue virtually
             self._virtual_queue[origin_id] = self._virtual_queue.get(origin_id, 0) + 1
             if self._virtual_queue[origin_id] > VIRTUAL_QUEUE_CAP:
-                # Overflow — count as denied entry, drop the virtual addition
                 self._virtual_queue[origin_id] = VIRTUAL_QUEUE_CAP
                 self.state.denied_entries_total += 1
                 self.state.denied_entries_this_step += 1
             return False
 
-        # Physical room exists. Build the route.
-        route = self.network.shortest_path(origin_id, dest_id, self.rng)
-        if not route:
-            # No path available (shouldn't happen on a connected grid, but guard)
+        # Build the full route with terminal links at both ends.
+        interior = self.network.shortest_path(origin_id, dest_id, self.rng)
+        if not interior:
             return False
 
+        # Look up the terminal links using the default-side logic
+        # already built into network.shortest_path.
+        origin_side = self.network._default_terminal_side(origin_id)
+        dest_side = self.network._default_terminal_side(dest_id)
+        if origin_side is None or dest_side is None:
+            return False
+
+        inbound = self.network.get_terminal_link(origin_id, origin_side, "in")
+        outbound = self.network.get_terminal_link(dest_id, dest_side, "out")
+        if inbound is None or outbound is None:
+            return False
+
+        route = [inbound] + interior + [outbound]
         self.spawn_agent(route, agent_type="car")
         return True
 
@@ -711,10 +726,21 @@ class Simulation:
             weights /= weights.sum()
             dest_id = self.rng.choice(dest_ids, p=weights)
 
-            route = self.network.shortest_path(origin_id, dest_id, self.rng)
-            if not route:
+            interior = self.network.shortest_path(origin_id, dest_id, self.rng)
+            if not interior:
                 continue
 
+            origin_side = self.network._default_terminal_side(origin_id)
+            dest_side = self.network._default_terminal_side(dest_id)
+            if origin_side is None or dest_side is None:
+                continue
+
+            inbound = self.network.get_terminal_link(origin_id, origin_side, "in")
+            outbound = self.network.get_terminal_link(dest_id, dest_side, "out")
+            if inbound is None or outbound is None:
+                continue
+
+            route = [inbound] + interior + [outbound]
             self.spawn_agent(route, agent_type="car")
             self._virtual_queue[origin_id] = pending - 1
 
