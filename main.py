@@ -2,7 +2,8 @@ import pygame
 import pygame_gui
 import math
 from simulation import Simulation
-from debug import setup_debug_one_car
+from debug import setup_debug_one_car, setup_am_peak
+from metrics import MetricsEngine, websters_optimal_cycle_simple
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, SIDEBAR_WIDTH, CANVAS_WIDTH,
     CANVAS_HEIGHT, FPS, BG_COLOR, GRID_BG, LINK_COLOR,
@@ -133,8 +134,19 @@ def main():
         text="Create Network",
         manager=manager
     )
-    network, sim = setup_debug_one_car()
+    network, sim = setup_am_peak()
     sim.pause()
+    metrics_engine = MetricsEngine()
+    heatmap_enabled = False
+    pending_webster_recommendation = None
+
+    # Phase 8 Block D: metrics update throttling
+    # We recompute network + per-intersection metrics every 10 sim-seconds
+    # to avoid unnecessary work on every frame. Cached here between updates.
+    METRICS_UPDATE_INTERVAL_S = 10.0
+    last_metrics_update_s = -1.0  # force immediate first update once time >= 0
+    cached_net_metrics = None
+    cached_intersection_metrics = {}  # keyed by intersection id
 
     rows_label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 85), (120, 24)),
@@ -197,6 +209,84 @@ def main():
     sim_status_label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 600), (SIDEBAR_WIDTH - 20, 24)),
         text="PAUSED  |  t = 0.0s",
+        manager=manager
+    )
+
+    # ===== Phase 8 Block B: Metrics panel and action buttons =====
+
+    # Horizontal separator visual (a simple thin label)
+    pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 640), (SIDEBAR_WIDTH - 20, 24)),
+        text="— NETWORK METRICS —",
+        manager=manager
+    )
+
+    # Network metrics readout: 6 lines of key numbers
+    net_completed_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 670), (SIDEBAR_WIDTH - 20, 22)),
+        text="Completed trips: 0",
+        manager=manager
+    )
+
+    net_active_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 692), (SIDEBAR_WIDTH - 20, 22)),
+        text="Active vehicles: 0",
+        manager=manager
+    )
+
+    net_delay_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 714), (SIDEBAR_WIDTH - 20, 22)),
+        text="Mean delay: 0.0 s",
+        manager=manager
+    )
+
+    net_tt_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 736), (SIDEBAR_WIDTH - 20, 22)),
+        text="Mean travel time: 0.0 s",
+        manager=manager
+    )
+
+    net_p85_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 758), (SIDEBAR_WIDTH - 20, 22)),
+        text="85th %ile travel: 0.0 s",
+        manager=manager
+    )
+
+    net_denied_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 780), (SIDEBAR_WIDTH - 20, 22)),
+        text="Denied entries: 0",
+        manager=manager
+    )
+
+    # Action buttons row
+    webster_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 815), (170, 30)),
+        text="Webster Optimal",
+        manager=manager
+    )
+
+    apply_webster_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 185, 815), (80, 30)),
+        text="Apply",
+        manager=manager
+    )
+    apply_webster_button.disable()  # disabled until a recommendation is computed
+
+    webster_result_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 850), (SIDEBAR_WIDTH - 20, 22)),
+        text="",
+        manager=manager
+    )
+
+    heatmap_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 880), (170, 30)),
+        text="Heatmap: OFF",
+        manager=manager
+    )
+
+    csv_export_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 185, 880), (80, 30)),
+        text="Export CSV",
         manager=manager
     )
 
@@ -369,6 +459,9 @@ def main():
                     sim = Simulation(network, seed=42)
                     sim.pause()
 
+                    metrics_engine = MetricsEngine()
+                    heatmap_enabled = False
+                    pending_webster_recommendation = None
                     selected_intersection = None
                     selected_link = None
                     info_label.set_text("Network created. Click an intersection or link.")
@@ -386,8 +479,10 @@ def main():
                 if event.ui_element == reset_button and sim is not None:
                     # Full reset: clear agents and restart the scenario.
                     # Rebuild the debug scenario so cars re-spawn at t=0 and t=3.
-                    network, sim = setup_debug_one_car()
+                    network, sim = setup_am_peak()
                     sim.pause()
+                    metrics_engine = MetricsEngine()
+                    pending_webster_recommendation = None
                     selected_intersection = None
                     selected_link = None
                     status_label.set_text("Simulation reset (paused)")
@@ -438,9 +533,48 @@ def main():
             sim_status_label.set_text(
                 f"{running_text}  |  t = {sim.state.time_s:.1f}s"
             )
-            
+
+        # Refresh metric panels every METRICS_UPDATE_INTERVAL_S simulated seconds
+        if sim is not None and sim.state.time_s - last_metrics_update_s >= METRICS_UPDATE_INTERVAL_S:
+            last_metrics_update_s = sim.state.time_s
+            state = sim.get_state()
+
+            # Network-level metrics
+            cached_net_metrics = metrics_engine.get_network_metrics()
+            cached_intersection_metrics = metrics_engine.get_intersection_metrics(state)
+
+            # Update sidebar labels
+            net_completed_label.set_text(
+                f"Completed trips: {int(cached_net_metrics['total_completed_trips'])}"
+            )
+            active_count = len([a for a in state.agents if a.active])
+            net_active_label.set_text(f"Active vehicles: {active_count}")
+            net_delay_label.set_text(
+                f"Mean delay: {cached_net_metrics['network_mean_delay_s']:.1f} s"
+            )
+            net_tt_label.set_text(
+                f"Mean travel time: {cached_net_metrics['mean_travel_time_s']:.1f} s"
+            )
+            net_p85_label.set_text(
+                f"85th %ile travel: {cached_net_metrics['p85_travel_time_s']:.1f} s"
+            )
+            net_denied_label.set_text(
+                f"Denied entries: {int(cached_net_metrics['denied_entries'])}"
+            )
+
+            # If an intersection is selected, update its live LOS info
+            if (current_mode == "intersection"
+                    and selected_intersection is not None
+                    and selected_intersection.id in cached_intersection_metrics):
+                im = cached_intersection_metrics[selected_intersection.id]
+                info_label.set_text(
+                    f"Intersection {selected_intersection.id} "
+                    f"— LOS {im['los']} ({im['mean_delay_sec_per_veh']:.1f}s)"
+                )
+
         if sim is not None:
             sim.step(dt)
+            metrics_engine.update(sim.get_state())    
         if network is not None:
             world_to_screen, screen_to_world = make_transform(
                 network,
@@ -534,6 +668,28 @@ def main():
                         state = "red"
 
                     draw_signal_head(screen, hx, hy, angle, state)
+
+            # LOS badges: colored letter rendered above each intersection.
+            # Uses the cached_intersection_metrics which refreshes every
+            # METRICS_UPDATE_INTERVAL_S sim-seconds.
+            los_badge_offset_px = 45  # how far above the intersection center
+            los_font = pygame.font.SysFont("Arial", 18, bold=True)
+
+            for inter in network.intersections:
+                im = cached_intersection_metrics.get(inter.id)
+                if im is None:
+                    continue
+                cx, cy = world_to_screen(inter.x_m, inter.y_m)
+                badge_color = im["los_color"]
+                badge_letter = im["los"]
+
+                # Draw small circle backdrop + the letter inside it
+                pygame.draw.circle(screen, badge_color, (cx, cy - los_badge_offset_px), 12)
+                pygame.draw.circle(screen, (30, 30, 30), (cx, cy - los_badge_offset_px), 12, 1)
+                text_surface = los_font.render(badge_letter, True, (255, 255, 255))
+                text_rect = text_surface.get_rect(center=(cx, cy - los_badge_offset_px))
+                screen.blit(text_surface, text_rect)
+
 
         manager.draw_ui(screen)
         if sim is not None:
