@@ -14,3 +14,19 @@
 #
 # DO NOT mix units. Convert at display time only.
 # =============================================================
+
+# (units header)
+
+def websters_optimal_cycle(L_total, Y):
+    """Webster's optimal cycle length. Clamp Y at 0.95."""
+    Y = min(Y, 0.95)
+    return (1.5 * L_total + 5) / (1 - Y)
+
+def level_of_service(delay_s):
+    """HCM LOS thresholds."""
+    if delay_s <= 10: return "A"
+    if delay_s <= 20: return "B"
+    if delay_s <= 35: return "C"
+    if delay_s <= 55: return "D"
+    if delay_s <= 80: return "E"
+    return "F"
