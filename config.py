@@ -25,6 +25,9 @@ WORLD_MARGIN_M = 50.0             # meters of padding around grid
 SATURATION_FLOW = 1800            # veh/hr/lane
 STARTUP_LOST_TIME = 2.0           # seconds
 FREE_FLOW_SPEED = 13.89           # m/s (~50 km/h)
+DEFAULT_LINK_LENGTH_M = 100
+DEFAULT_LANES = 1
+FREE_FLOW_SPEED = 15
 
 # Simulation
 TIMESTEP = 1.0                    # seconds, fixed
