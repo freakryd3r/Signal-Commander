@@ -639,6 +639,75 @@ def websters_optimal_cycle_from_lane_groups(
         "iteration_count": iteration_count,
     }
 
+def websters_optimal_cycle_simple(
+    intersection_state: Any,
+    yellow_s: float = 3.0,
+    all_red_s: float = 2.0,
+    startup_lost_per_phase_s: float = 2.0,
+    clamp_y_at: float = 0.95,
+) -> Dict[str, Any]:
+    """
+    Simplified Webster optimal cycle based on aggregate per-approach
+    flows in last_cycle_flows. Assumes all flow is through-movement
+    (no turning equivalencies). Good enough for demo; full lane-group
+    Webster is available via websters_optimal_cycle_from_lane_groups().
+
+    Returns dict with:
+      optimal_cycle_s, was_y_clamped, y_total, y_ns, y_ew,
+      green_ns_s, green_ew_s, lost_time_s, flow_inputs (for UI display).
+    """
+    if not has_valid_last_cycle_flows(intersection_state):
+        raise ValueError("No measured flows yet. Wait for first cycle to complete.")
+
+    flows = intersection_state.last_cycle_flows
+    # Critical lane flow per phase: max of the two approaches
+    qc_ns = max(flows["N"], flows["S"])
+    qc_ew = max(flows["E"], flows["W"])
+
+    y_ns = qc_ns / SAT_FLOW
+    y_ew = qc_ew / SAT_FLOW
+    y_total_raw = y_ns + y_ew
+
+    was_y_clamped = False
+    y_total = y_total_raw
+    if y_total > clamp_y_at:
+        y_total = clamp_y_at
+        was_y_clamped = True
+        if y_total_raw > 0:
+            scale = y_total / y_total_raw
+            y_ns *= scale
+            y_ew *= scale
+
+    if y_total <= 0:
+        raise ValueError("Computed Y is nonpositive. Demand is too low to run Webster.")
+
+    # Lost time: 2 phases, each with startup + yellow + all_red
+    lost_time_s = 2.0 * (startup_lost_per_phase_s + yellow_s + all_red_s)
+
+    denominator = 1.0 - y_total
+    if denominator <= 0:
+        raise ValueError("Webster cycle denominator is nonpositive.")
+
+    optimal_cycle_s = (1.5 * lost_time_s + 5.0) / denominator
+    if optimal_cycle_s <= lost_time_s:
+        raise ValueError("Computed cycle length must exceed lost time.")
+
+    effective_green_total_s = optimal_cycle_s - lost_time_s
+    green_ns_s = (y_ns / y_total) * effective_green_total_s
+    green_ew_s = (y_ew / y_total) * effective_green_total_s
+
+    return {
+        "optimal_cycle_s": float(optimal_cycle_s),
+        "green_ns_s": float(green_ns_s),
+        "green_ew_s": float(green_ew_s),
+        "y_total": float(y_total),
+        "y_total_raw_before_clamp": float(y_total_raw),
+        "y_ns": float(y_ns),
+        "y_ew": float(y_ew),
+        "lost_time_s": float(lost_time_s),
+        "was_y_clamped": was_y_clamped,
+        "flow_inputs": dict(flows),
+    }
 
 # =============================================================================
 # MAIN ENGINE
@@ -889,6 +958,17 @@ class MetricsEngine:
             cycle_green_by_intersection=cycle_green_by_intersection,
         )
 
+    def get_webster_recommendation_simple(
+    self,
+    intersection_state: Any,
+    yellow_s: float = 3.0,
+    all_red_s: float = 2.0,
+    ) -> Dict[str, Any]:
+        return websters_optimal_cycle_simple(
+        intersection_state=intersection_state,
+        yellow_s=yellow_s,
+        all_red_s=all_red_s,
+    )
 
 # =============================================================================
 # CSV EXPORT
