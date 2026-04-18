@@ -62,7 +62,28 @@ CAR_LENGTH_M = 5.0
 BUS_LENGTH_M = 12.0
 MIN_GAP_AT_REST_M = 2.0        # used in Phase 3 car-following
 HEADWAY_TIME_S = 1.5           # used in Phase 3 car-following
+# Signal phase order + default durations (per-intersection overrides live on
+# the Intersection object: cycle_length, green_ns, green_ew).
+YELLOW_DURATION_S = 3.0
+ALL_RED_DURATION_S = 2.0
+# Position of the stop line on each approach link, measured upstream of
+# the intersection center. Agents decelerate to stop here on red.
+STOP_LINE_OFFSET_M = 5.0
 
+# Minimum speed below which we consider an agent "stopped" (for queue
+# detection in metrics.py and for startup-lost-time logic in Phase 6).
+STOPPED_SPEED_THRESHOLD_MS = 0.5
+DRIVER_REACTION_TIME_S = 1.0
+QUEUE_DETECTION_ZONE_M = 50.0
+# Phase sequence — signals cycle in this exact order.
+PHASE_SEQUENCE = [
+    "NS_GREEN",
+    "NS_YELLOW",
+    "ALL_RED_1",
+    "EW_GREEN",
+    "EW_YELLOW",
+    "ALL_RED_2",
+]
 
 # =================================================================
 # STATE DATACLASSES — FROZEN SCHEMA (consumed by metrics.py)
@@ -70,6 +91,28 @@ HEADWAY_TIME_S = 1.5           # used in Phase 3 car-following
 # Person C reads these. Do not rename or remove fields without a
 # 3-person discussion. New fields can be ADDED at any time.
 # =================================================================
+
+def _approach_direction_for_link(link):
+    """
+    Given a link traveling into an intersection, return the approach direction
+    as seen from that intersection.
+
+    A link going east→west (from_x > to_x) approaches from the east,
+    so the downstream intersection sees traffic from its "E" approach.
+
+    Returns one of "N", "S", "E", "W", or None if the link is neither
+    horizontal nor vertical (shouldn't happen on a grid).
+    """
+    dx = link.to_int.x_m - link.from_int.x_m
+    dy = link.to_int.y_m - link.from_int.y_m
+
+    # Horizontal movement (dominant east-west component)
+    if abs(dx) > abs(dy):
+        # Traffic traveling +x (east) arrives from the west side
+        return "W" if dx > 0 else "E"
+    else:
+        # Traffic traveling +y (south in screen coords) arrives from the north
+        return "N" if dy > 0 else "S"
 
 @dataclass
 class LinkState:
@@ -196,6 +239,9 @@ class Agent:
         # Initialize world position from route[0] start
         self._update_world_position()
 
+        self.was_stopped = False
+        self.free_to_move_at_s = None
+
     @property
     def length_m(self):
         """Physical vehicle length for car-following (Phase 3)."""
@@ -269,22 +315,107 @@ class Agent:
 
 class Signal:
     """
-    Signal state machine for one intersection.
+    Traffic signal state machine for one intersection.
 
-    Phase 2: stub. Always NS_GREEN, never transitions.
-    Phase 4: implements full cycle: NS_GREEN → NS_YELLOW → ALL_RED
-                                    → EW_GREEN → EW_YELLOW → ALL_RED → loop.
+    Phase 4: cycles NS_GREEN → NS_YELLOW → ALL_RED_1 → EW_GREEN
+                    → EW_YELLOW → ALL_RED_2 → repeat.
+
+    Durations come from the Intersection's cycle_length, green_ns, green_ew,
+    plus module-level YELLOW_DURATION_S / ALL_RED_DURATION_S.
+
+    Pending timing changes (set by main.py or metrics.py via
+    intersection_state.pending_*) are applied at the start of NS_GREEN
+    so a cycle is never interrupted mid-phase.
     """
 
     def __init__(self, intersection):
         self.intersection = intersection
-        self.current_phase = "NS_GREEN"
+        self.phase_idx = 0  # index into PHASE_SEQUENCE
+        self.current_phase = PHASE_SEQUENCE[0]
         self.time_in_phase_s = 0.0
         self.cycle_start_time_s = 0.0
 
-    def step(self, dt):
-        # Phase 2: accumulate time only; no transitions.
+    def _phase_duration(self):
+        """Duration of the current phase in seconds, based on intersection timing."""
+        phase = self.current_phase
+        inter = self.intersection
+        if phase == "NS_GREEN":
+            return float(inter.green_ns)
+        if phase == "EW_GREEN":
+            return float(inter.green_ew)
+        if phase in ("NS_YELLOW", "EW_YELLOW"):
+            return YELLOW_DURATION_S
+        if phase in ("ALL_RED_1", "ALL_RED_2"):
+            return ALL_RED_DURATION_S
+        return 0.0
+
+    def _apply_pending_timing(self, istate, sim_time_s):
+        """
+        Swap in any queued cycle_length / green_ns / green_ew from the
+        IntersectionState. Called only at the NS_GREEN boundary so the
+        signal never stutters mid-cycle.
+        """
+        if istate.pending_cycle_length_s is not None:
+            self.intersection.cycle_length = istate.pending_cycle_length_s
+            istate.cycle_length_s = istate.pending_cycle_length_s
+            istate.pending_cycle_length_s = None
+
+        if istate.pending_green_ns_s is not None:
+            self.intersection.green_ns = istate.pending_green_ns_s
+            istate.green_ns_s = istate.pending_green_ns_s
+            istate.pending_green_ns_s = None
+
+        if istate.pending_green_ew_s is not None:
+            self.intersection.green_ew = istate.pending_green_ew_s
+            istate.green_ew_s = istate.pending_green_ew_s
+            istate.pending_green_ew_s = None
+
+    def step(self, dt, sim_time_s, istate):
+        """
+        Advance the signal state machine by dt seconds.
+
+        On NS_GREEN entry, apply pending timing changes and stamp the new
+        cycle start time. On every other phase transition, just move on.
+        """
         self.time_in_phase_s += dt
+
+        duration = self._phase_duration()
+        if self.time_in_phase_s < duration:
+            return
+
+        # Time to transition
+        self.phase_idx = (self.phase_idx + 1) % len(PHASE_SEQUENCE)
+        self.current_phase = PHASE_SEQUENCE[self.phase_idx]
+        self.time_in_phase_s = 0.0
+
+        # Entering NS_GREEN means a new cycle has begun
+        if self.current_phase == "NS_GREEN":
+            self.cycle_start_time_s = sim_time_s
+            self._apply_pending_timing(istate, sim_time_s)
+
+    def is_green_for(self, approach):
+        """
+        Given approach in {"N","S","E","W"}, return True if that approach
+        has a green light right now.
+        """
+        phase = self.current_phase
+        if phase == "NS_GREEN":
+            return approach in ("N", "S")
+        if phase == "EW_GREEN":
+            return approach in ("E", "W")
+        return False
+
+    def is_yellow_for(self, approach):
+        phase = self.current_phase
+        if phase == "NS_YELLOW":
+            return approach in ("N", "S")
+        if phase == "EW_YELLOW":
+            return approach in ("E", "W")
+        return False
+
+    def is_red_for(self, approach):
+        # Everything that's not green or yellow is red (including all-red phases).
+        return not (self.is_green_for(approach) or self.is_yellow_for(approach))
 
 
 # =================================================================
@@ -458,28 +589,61 @@ class Simulation:
 
         # 3. Step signals; mirror their state into IntersectionState for metrics.py
         for sig in self.signals.values():
-            sig.step(dt)
             istate = self.state.intersections[sig.intersection.id]
+            sig.step(dt, self.state.time_s, istate)
             istate.current_phase = sig.current_phase
             istate.time_in_phase_s = sig.time_in_phase_s
             istate.cycle_start_time_s = sig.cycle_start_time_s
 
-        # 4. Determine each agent's speed using car-following rule
-        #    (Compute ALL speeds first, then move — using a two-pass update
-        #    ensures symmetry; the leader's prior position is used, not its
-        #    post-move position. Prevents order-of-iteration artefacts.)
+        # 4. Determine each agent's speed, applying:
+        #    (a) car-following (Phase 3)
+        #    (b) signal compliance (Phase 5)
+        #    (c) startup lost time on release from stop (Phase 6)
         for agent in self.agents:
             if not agent.active:
                 continue
+
+            # (a) car-following constraint
             _leader, gap_m = self._find_leader(agent)
             if gap_m == float("inf"):
-                agent.speed_ms = FREE_FLOW_SPEED
+                cf_speed = FREE_FLOW_SPEED
             else:
-                # Car-following: allowed speed decreases as gap closes.
-                # gap = HEADWAY_TIME_S * speed + MIN_GAP_AT_REST_M  →
-                # speed_allowed = max(0, (gap - MIN_GAP_AT_REST_M) / HEADWAY_TIME_S)
-                speed_allowed = max(0.0, (gap_m - MIN_GAP_AT_REST_M) / HEADWAY_TIME_S)
-                agent.speed_ms = min(FREE_FLOW_SPEED, speed_allowed)
+                cf_speed = max(0.0, (gap_m - MIN_GAP_AT_REST_M) / HEADWAY_TIME_S)
+                cf_speed = min(FREE_FLOW_SPEED, cf_speed)
+
+            # (b) signal constraint
+            sig_speed = self._signal_constrained_speed(agent)
+
+            # Raw speed before reaction-time check
+            raw_speed = min(cf_speed, sig_speed)
+
+            # (c) startup lost time: if we're currently stopped AND the raw
+            # speed says "you can move now," hold still for DRIVER_REACTION_TIME_S
+            # to simulate driver reaction.
+            if agent.was_stopped:
+                if raw_speed > STOPPED_SPEED_THRESHOLD_MS:
+                    # This is the moment we became free to move
+                    if agent.free_to_move_at_s is None:
+                        agent.free_to_move_at_s = self.state.time_s
+                    # Check if reaction time has elapsed
+                    elapsed = self.state.time_s - agent.free_to_move_at_s
+                    if elapsed < DRIVER_REACTION_TIME_S:
+                        raw_speed = 0.0  # still reacting
+                    else:
+                        # Reaction done; release and clear the flags
+                        agent.was_stopped = False
+                        agent.free_to_move_at_s = None
+                else:
+                    # Still stopped; clear pending release timer if there was one
+                    agent.free_to_move_at_s = None
+
+            # Update stop tracking for next tick
+            if raw_speed <= STOPPED_SPEED_THRESHOLD_MS:
+                agent.was_stopped = True
+            # (if raw_speed > threshold and was_stopped was True, the
+            # reaction-time machinery above handled it)
+
+            agent.speed_ms = raw_speed
 
         # 5. Advance each agent by its computed speed; record completions
         for agent in self.agents:
@@ -500,6 +664,9 @@ class Simulation:
 
         # 6. Refresh per-link dynamic state
         self._update_link_states()
+
+        # 7. Per-intersection measurements (queue lengths, stop-line crossings)
+        self._update_intersection_measurements()
 
     # ----------------- Car-following helpers (Phase 3) -----------------
 
@@ -564,6 +731,59 @@ class Simulation:
 
         return best_leader, max(best_gap, 0.0) if best_leader is not None else float("inf")
 
+    def _signal_constrained_speed(self, agent):
+        """
+        Return the maximum speed this agent is allowed by the next
+        downstream signal, or FREE_FLOW_SPEED if no signal applies.
+
+        Stop line is STOP_LINE_OFFSET_M upstream of the intersection center.
+        The signal this agent obeys is the one at link.to_int — only applies
+        if to_int is a real intersection (not a terminal).
+        """
+        link = agent.current_link()
+        if link is None:
+            return FREE_FLOW_SPEED
+
+        # No signal compliance on outbound terminal links (agent is leaving)
+        # or if downstream is not a real intersection.
+        downstream = link.to_int
+        if downstream.is_terminal:
+            return FREE_FLOW_SPEED
+
+        signal = self.signals.get(downstream.id)
+        if signal is None:
+            return FREE_FLOW_SPEED
+
+        approach = _approach_direction_for_link(link)
+        if approach is None:
+            return FREE_FLOW_SPEED
+
+        # Distance from agent's nose to the stop line
+        stop_line_pos = link.length_m - STOP_LINE_OFFSET_M
+        dist_to_stop = stop_line_pos - agent.position_on_link_m
+
+        # If we're already past the stop line, the signal doesn't restrict us
+        # (we're in the middle of clearing the intersection).
+        if dist_to_stop <= 0:
+            return FREE_FLOW_SPEED
+
+        # Decide based on signal state
+        if signal.is_green_for(approach):
+            return FREE_FLOW_SPEED
+
+        if signal.is_yellow_for(approach):
+            # Dilemma zone: can we clear at current speed?
+            # Time remaining in yellow = YELLOW_DURATION_S - time_in_phase
+            remaining = YELLOW_DURATION_S - signal.time_in_phase_s
+            if remaining > 0 and agent.speed_ms * remaining >= dist_to_stop:
+                return FREE_FLOW_SPEED
+            # Otherwise fall through to red-equivalent stop behavior
+
+        # Red (or yellow-can't-clear): decelerate to stop at the stop line.
+        # Treat the stop line as a virtual stationary leader.
+        allowed = max(0.0, (dist_to_stop - MIN_GAP_AT_REST_M) / HEADWAY_TIME_S)
+        return min(FREE_FLOW_SPEED, allowed)
+
     def _update_link_states(self):
         """Count vehicles per link and compute density + mean speed."""
         # Zero out
@@ -594,3 +814,95 @@ class Simulation:
             lstate.density_veh_per_km = lstate.num_vehicles / length_km
             if lstate.num_vehicles > 0:
                 lstate.mean_speed_ms = speed_sum.get(link_id, 0.0) / lstate.num_vehicles
+    
+    def _update_intersection_measurements(self):
+        """
+        Per-tick updates to each IntersectionState:
+          - queue_lengths: count stopped agents in the detection zone
+          - arrivals_this_step / departures_this_step: detect stop-line
+            crossings this tick
+          - arrivals_by_approach / departures_by_approach: append
+            (time, count) tuples to the cumulative logs
+
+        Arrival = agent entered the queue detection zone this tick.
+        Departure = agent crossed the stop line this tick (moving downstream).
+        """
+        # Zero per-step counters
+        for istate in self.state.intersections.values():
+            for d in ("N", "S", "E", "W"):
+                istate.queue_lengths[d] = 0
+                istate.arrivals_this_step[d] = 0
+                istate.departures_this_step[d] = 0
+
+        # Iterate active agents and attribute to downstream intersection
+        for agent in self.agents:
+            if not agent.active:
+                continue
+
+            link = agent.current_link()
+            if link is None:
+                continue
+
+            downstream = link.to_int
+            if downstream.is_terminal:
+                # Agent is leaving the network; no intersection measurement
+                continue
+
+            istate = self.state.intersections.get(downstream.id)
+            if istate is None:
+                continue
+
+            approach = _approach_direction_for_link(link)
+            if approach is None:
+                continue
+
+            stop_line_pos = link.length_m - STOP_LINE_OFFSET_M
+            dist_to_stop = stop_line_pos - agent.position_on_link_m
+
+            # Queue length: stopped agent within the detection zone upstream
+            # of the stop line
+            in_detection_zone = (
+                dist_to_stop >= 0 and dist_to_stop <= QUEUE_DETECTION_ZONE_M
+            )
+            if in_detection_zone and agent.speed_ms < STOPPED_SPEED_THRESHOLD_MS:
+                istate.queue_lengths[approach] += 1
+
+            # Arrival event: crossed into the detection zone this tick.
+            # We detect this via the "previous step" position. Store that
+            # on the agent for state continuity.
+            prev_pos = getattr(agent, "_prev_position_on_link_m", None)
+            prev_link_id = getattr(agent, "_prev_link_id", None)
+
+            same_link = prev_link_id == link.id
+            if same_link and prev_pos is not None:
+                prev_dist = stop_line_pos - prev_pos
+                # Arrived at detection zone (crossed inward this tick)
+                if prev_dist > QUEUE_DETECTION_ZONE_M and dist_to_stop <= QUEUE_DETECTION_ZONE_M:
+                    istate.arrivals_this_step[approach] += 1
+                # Departed across stop line this tick (was upstream of stop,
+                # is now past it)
+                if prev_dist > 0 and dist_to_stop <= 0:
+                    istate.departures_this_step[approach] += 1
+            elif not same_link:
+                # Agent just transitioned to this link from upstream.
+                # If it spawned right on or past the detection zone it counts
+                # as an arrival. Most common case: agents coming from another
+                # link in the route, so they appear at position 0, which means
+                # dist_to_stop = link.length_m - STOP_LINE_OFFSET_M. That's
+                # almost certainly outside the 50m zone on any real link, so
+                # no arrival counted here. Correct behavior.
+                pass
+
+            # Track for next tick
+            agent._prev_position_on_link_m = agent.position_on_link_m
+            agent._prev_link_id = link.id
+
+        # Append non-zero this-step counts to the cumulative logs
+        for istate in self.state.intersections.values():
+            for d in ("N", "S", "E", "W"):
+                a = istate.arrivals_this_step[d]
+                if a > 0:
+                    istate.arrivals_by_approach[d].append((self.state.time_s, a))
+                dep = istate.departures_this_step[d]
+                if dep > 0:
+                    istate.departures_by_approach[d].append((self.state.time_s, dep))
