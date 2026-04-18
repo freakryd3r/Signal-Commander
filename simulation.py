@@ -225,20 +225,18 @@ class Agent:
 
     def step(self, dt):
         """
-        Advance one physics timestep.
+        Advance position by (speed_ms * dt). Speed is set by the
+        simulation's car-following rule before this is called.
 
-        Phase 2: pure free-flow motion. No gap checking, no signals.
+        Phase 3: pure kinematic update; speed already reflects gap to leader.
         """
         if not self.active:
             return
 
-        # Advance along current link
         distance = self.speed_ms * dt
         self.position_on_link_m += distance
 
-        # Jump to next link(s) if we overran. The `while` handles
-        # edge cases where dt is large enough to cross multiple links
-        # in a single tick (shouldn't happen at realistic dt, but safe).
+        # Advance across link boundaries if we overran.
         while (
             self.current_link() is not None
             and self.position_on_link_m >= self.current_link().length_m
@@ -248,7 +246,7 @@ class Agent:
             self.current_link_idx += 1
             self.position_on_link_m = excess
 
-        # If we've reached the end of the final link, deactivate.
+        # If past the end of the last link, deactivate.
         if self.current_link_idx == len(self.route) - 1:
             last = self.current_link()
             if last is not None and self.position_on_link_m >= last.length_m:
@@ -466,7 +464,24 @@ class Simulation:
             istate.time_in_phase_s = sig.time_in_phase_s
             istate.cycle_start_time_s = sig.cycle_start_time_s
 
-        # 4. Step agents; record completions
+        # 4. Determine each agent's speed using car-following rule
+        #    (Compute ALL speeds first, then move — using a two-pass update
+        #    ensures symmetry; the leader's prior position is used, not its
+        #    post-move position. Prevents order-of-iteration artefacts.)
+        for agent in self.agents:
+            if not agent.active:
+                continue
+            _leader, gap_m = self._find_leader(agent)
+            if gap_m == float("inf"):
+                agent.speed_ms = FREE_FLOW_SPEED
+            else:
+                # Car-following: allowed speed decreases as gap closes.
+                # gap = HEADWAY_TIME_S * speed + MIN_GAP_AT_REST_M  →
+                # speed_allowed = max(0, (gap - MIN_GAP_AT_REST_M) / HEADWAY_TIME_S)
+                speed_allowed = max(0.0, (gap_m - MIN_GAP_AT_REST_M) / HEADWAY_TIME_S)
+                agent.speed_ms = min(FREE_FLOW_SPEED, speed_allowed)
+
+        # 5. Advance each agent by its computed speed; record completions
         for agent in self.agents:
             was_active = agent.active
             agent.step(dt)
@@ -483,8 +498,71 @@ class Simulation:
                 self.state.completed_trips.append(trip)
                 self.state.completed_trips_this_step.append(trip)
 
-        # 5. Refresh per-link dynamic state
+        # 6. Refresh per-link dynamic state
         self._update_link_states()
+
+    # ----------------- Car-following helpers (Phase 3) -----------------
+
+    def _find_leader(self, agent):
+        """
+        Return (leader_agent, gap_m) for the agent directly ahead of `agent`
+        on its route, or (None, inf) if no leader is visible.
+
+        Search strategy:
+          1. Check same link — closest active agent ahead on the same link.
+          2. If none, check the next link in the route — closest active agent
+             on route[current_link_idx + 1], distance measured as
+             (remaining distance on current link) + (leader's position on next link).
+
+        Only looks one link ahead. Good enough: agents travel at most
+        ~15 m/s and our links are ≥100 m, so a leader is almost always
+        on the current or next link within one tick's notice.
+        """
+        my_link = agent.current_link()
+        if my_link is None:
+            return None, float("inf")
+
+        best_leader = None
+        best_gap = float("inf")
+
+        # 1. Leaders on the same link, ahead of me
+        for other in self.agents:
+            if other is agent or not other.active:
+                continue
+            other_link = other.current_link()
+            if other_link is None or other_link.id != my_link.id:
+                continue
+            if other.position_on_link_m <= agent.position_on_link_m:
+                continue  # behind me, ignore
+            # Bumper-to-bumper gap: leader's tail minus my nose
+            gap = (other.position_on_link_m - other.length_m) - agent.position_on_link_m
+            if gap < best_gap:
+                best_gap = gap
+                best_leader = other
+
+        if best_leader is not None:
+            return best_leader, max(best_gap, 0.0)
+
+        # 2. No same-link leader; check the next link in my route
+        if agent.current_link_idx + 1 >= len(agent.route):
+            return None, float("inf")
+
+        next_link = agent.route[agent.current_link_idx + 1]
+        remaining_on_current = my_link.length_m - agent.position_on_link_m
+
+        for other in self.agents:
+            if other is agent or not other.active:
+                continue
+            other_link = other.current_link()
+            if other_link is None or other_link.id != next_link.id:
+                continue
+            # Gap spans two links: remaining on current + leader's pos on next
+            gap = remaining_on_current + (other.position_on_link_m - other.length_m)
+            if gap < best_gap:
+                best_gap = gap
+                best_leader = other
+
+        return best_leader, max(best_gap, 0.0) if best_leader is not None else float("inf")
 
     def _update_link_states(self):
         """Count vehicles per link and compute density + mean speed."""
