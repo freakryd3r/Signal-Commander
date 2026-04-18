@@ -768,11 +768,11 @@ class Simulation:
         while self._scheduled_spawns and self._scheduled_spawns[0][0] <= self.state.time_s:
             _, route, agent_type = self._scheduled_spawns.pop(0)
             self.spawn_agent(route, agent_type)
-            # 2b. Generate Poisson OD arrivals (Phase 7)
-            self._generate_poisson_arrivals(dt)
+        # 2b. Generate Poisson OD arrivals (Phase 7)
+        self._generate_poisson_arrivals(dt)
 
-            # 2c. Attempt to drain any virtual queues that are pending
-            self._drain_virtual_queues()
+        # 2c. Attempt to drain any virtual queues that are pending
+        self._drain_virtual_queues()
 
         # 3. Step signals; mirror their state into IntersectionState for metrics.py
         for sig in self.signals.values():
