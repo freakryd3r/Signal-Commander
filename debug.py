@@ -50,10 +50,62 @@ def setup_debug_one_car():
         )
 
     sim.schedule_spawn(spawn_time_s=0.0, route=route_a, agent_type="car")
+    sim.schedule_spawn(spawn_time_s=1.0, route=route_b, agent_type="car")
+    sim.schedule_spawn(spawn_time_s=2.0, route=route_b, agent_type="car")
     sim.schedule_spawn(spawn_time_s=3.0, route=route_b, agent_type="car")
+    sim.schedule_spawn(spawn_time_s=4.0, route=route_b, agent_type="car")
 
     return network, sim
 
+def setup_am_peak():
+    """
+    Preset AM peak scenario on a 3×3 grid.
+
+    Demand pattern:
+      - West and south perimeter flow heavily toward east and north.
+      - Moderate reverse flows.
+      - Models a commute into a CBD located at the northeast.
+
+    Returns (network, sim). Simulation starts paused; caller resumes.
+    """
+    network = Network(rows=3, cols=3, link_length=200)
+    sim = Simulation(network, seed=42)
+
+    # Build OD matrix. All flows are in veh/hr.
+    # Heavy demand from west+south edges toward east+north.
+    od = {}
+
+    # West edge origins → east edge destinations
+    for r in range(3):
+        origin = f"I_{r}_0"
+        od.setdefault(origin, {})
+        for dest_r in range(3):
+            od[origin][f"I_{dest_r}_2"] = 180.0  # 180 veh/hr per pair
+
+    # South edge origins → north edge destinations
+    for c in range(3):
+        origin = f"I_2_{c}"
+        od.setdefault(origin, {})
+        for dest_c in range(3):
+            od[origin][f"I_0_{dest_c}"] = 120.0
+
+    # Modest reverse flows (east/north going west/south)
+    for r in range(3):
+        origin = f"I_{r}_2"
+        od.setdefault(origin, {})
+        for dest_r in range(3):
+            od[origin][f"I_{dest_r}_0"] = 60.0
+
+    for c in range(3):
+        origin = f"I_0_{c}"
+        od.setdefault(origin, {})
+        for dest_c in range(3):
+            od[origin][f"I_2_{dest_c}"] = 60.0
+
+    sim.set_od_matrix(od)
+    sim.set_demand_scale(1.0)
+
+    return network, sim
 
 # ============================================================
 # Headless runner — prints movement to terminal for validation
@@ -121,6 +173,7 @@ def run_debug_one_car_headless(total_sim_seconds=45, print_interval_s=1.0):
 
 SCENARIOS = {
     "debug_one_car": setup_debug_one_car,
+    "am_peak": setup_am_peak,
 }
 
 
@@ -131,3 +184,4 @@ def get_scenario(name):
 
 if __name__ == "__main__":
     run_debug_one_car_headless()
+

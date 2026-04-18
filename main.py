@@ -1,5 +1,6 @@
 import pygame
 import pygame_gui
+import math
 from simulation import Simulation
 from debug import setup_debug_one_car
 from config import (
@@ -54,6 +55,63 @@ def safe_int(text, fallback):
     except:
         return fallback
 
+def draw_signal_head(screen, center_x, center_y, approach_angle_rad, phase_state):
+    """
+    Draw a vertical traffic signal head (red/yellow/green) at (center_x, center_y),
+    oriented so the head faces the approaching traffic (pointing upstream).
+
+    phase_state is one of "green", "yellow", "red".
+
+    Head layout: three stacked circles. Unlit = dim, lit = bright.
+    """
+    # Small housing rectangle behind the lights for visual contrast
+    housing_w = 14
+    housing_h = 34
+    # The housing is oriented perpendicular to approach direction
+    perp_angle = approach_angle_rad + math.pi / 2
+
+    # Compute the 4 corners of the housing rect (rotated)
+    cx, cy = center_x, center_y
+    cos_a = math.cos(approach_angle_rad)
+    sin_a = math.sin(approach_angle_rad)
+
+    def rotated_point(dx, dy):
+        return (cx + dx * cos_a - dy * sin_a, cy + dx * sin_a + dy * cos_a)
+
+    corners = [
+        rotated_point(-housing_w / 2, -housing_h / 2),
+        rotated_point(housing_w / 2, -housing_h / 2),
+        rotated_point(housing_w / 2, housing_h / 2),
+        rotated_point(-housing_w / 2, housing_h / 2),
+    ]
+    pygame.draw.polygon(screen, (30, 30, 35), corners)
+
+    # Three circles, red (top) → yellow → green (bottom) along the perpendicular axis.
+    # "Top" in the signal head is the side facing upstream traffic — we use -dy
+    # along the approach direction to place it "in front of" the intersection.
+    light_radius = 4
+    light_spacing = 10
+
+    bright_red = (240, 40, 40)
+    dim_red = (70, 20, 20)
+    bright_yel = (255, 210, 50)
+    dim_yel = (70, 60, 20)
+    bright_grn = (40, 220, 80)
+    dim_grn = (20, 60, 25)
+
+    red_color = bright_red if phase_state == "red" else dim_red
+    yel_color = bright_yel if phase_state == "yellow" else dim_yel
+    grn_color = bright_grn if phase_state == "green" else dim_grn
+
+    # The three light positions along the housing's long axis
+    # (which is the perpendicular to approach direction)
+    red_pos = rotated_point(0, -light_spacing)
+    yel_pos = rotated_point(0, 0)
+    grn_pos = rotated_point(0, light_spacing)
+
+    pygame.draw.circle(screen, red_color, (int(red_pos[0]), int(red_pos[1])), light_radius)
+    pygame.draw.circle(screen, yel_color, (int(yel_pos[0]), int(yel_pos[1])), light_radius)
+    pygame.draw.circle(screen, grn_color, (int(grn_pos[0]), int(grn_pos[1])), light_radius)
 
 def main():
     pygame.init()
@@ -76,7 +134,7 @@ def main():
         manager=manager
     )
     network, sim = setup_debug_one_car()
-    sim.resume()
+    sim.pause()
 
     rows_label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 85), (120, 24)),
@@ -114,6 +172,31 @@ def main():
     create_network_button = pygame_gui.elements.UIButton(
         relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 195), (160, 32)),
         text="Create Network",
+        manager=manager
+    )
+
+    # Simulation control buttons
+    start_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 560), (80, 32)),
+        text="Start",
+        manager=manager
+    )
+
+    pause_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 100, 560), (80, 32)),
+        text="Pause",
+        manager=manager
+    )
+
+    reset_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 190, 560), (80, 32)),
+        text="Reset",
+        manager=manager
+    )
+
+    sim_status_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 600), (SIDEBAR_WIDTH - 20, 24)),
+        text="PAUSED  |  t = 0.0s",
         manager=manager
     )
 
@@ -170,9 +253,6 @@ def main():
         text="",
         manager=manager
     )
-
-    network, sim = setup_debug_one_car() 
-    sim.resume()
 
     selected_intersection = None
     selected_link = None
@@ -286,12 +366,31 @@ def main():
                         cols=cols,
                         link_length=link_length
                     )
+                    sim = Simulation(network, seed=42)
+                    sim.pause()
 
                     selected_intersection = None
                     selected_link = None
-                    info_label.set_text("Click an intersection or link")
+                    info_label.set_text("Network created. Click an intersection or link.")
                     clear_selection_ui()
-                    status_label.set_text("Network created")
+                    status_label.set_text("Network created (paused)")
+
+                if event.ui_element == start_button and sim is not None:
+                    sim.resume()
+                    status_label.set_text("Simulation started")
+
+                if event.ui_element == pause_button and sim is not None:
+                    sim.pause()
+                    status_label.set_text("Simulation paused")
+
+                if event.ui_element == reset_button and sim is not None:
+                    # Full reset: clear agents and restart the scenario.
+                    # Rebuild the debug scenario so cars re-spawn at t=0 and t=3.
+                    network, sim = setup_debug_one_car()
+                    sim.pause()
+                    selected_intersection = None
+                    selected_link = None
+                    status_label.set_text("Simulation reset (paused)")
 
                 if event.ui_element == apply_button and network is not None:
                     if current_mode == "intersection" and selected_intersection is not None:
@@ -332,6 +431,14 @@ def main():
             manager.process_events(event)
 
         manager.update(dt)
+
+        # Refresh the sim status label every frame
+        if sim is not None:
+            running_text = "RUNNING" if sim.state.sim_running else "PAUSED"
+            sim_status_label.set_text(
+                f"{running_text}  |  t = {sim.state.time_s:.1f}s"
+            )
+            
         if sim is not None:
             sim.step(dt)
         if network is not None:
@@ -393,13 +500,49 @@ def main():
 
                 pygame.draw.circle(screen, color, (x, y), radius)
 
+            # Signal heads on each approach of each intersection.
+            # Approach offset pulls the head back from the intersection center
+            # so it sits on the approaching side of each link.
+            signal_head_offset_px = 28
+
+            for inter in network.intersections:
+                cx, cy = world_to_screen(inter.x_m, inter.y_m)
+
+                sig = sim.signals.get(inter.id) if sim is not None else None
+                if sig is None:
+                    continue
+
+                # For each of the four approaches, determine angle and state.
+                # Angle points from intersection outward toward approach origin.
+                approaches = {
+                    "N": -math.pi / 2,   # North approach: traffic comes from above
+                    "S":  math.pi / 2,   # South approach: traffic comes from below
+                    "E":  0.0,           # East approach: traffic comes from the right
+                    "W":  math.pi,       # West approach: traffic comes from the left
+                }
+
+                for approach, angle in approaches.items():
+                    # Place signal head slightly upstream on the approach side
+                    hx = cx + signal_head_offset_px * math.cos(angle)
+                    hy = cy + signal_head_offset_px * math.sin(angle)
+
+                    if sig.is_green_for(approach):
+                        state = "green"
+                    elif sig.is_yellow_for(approach):
+                        state = "yellow"
+                    else:
+                        state = "red"
+
+                    draw_signal_head(screen, hx, hy, angle, state)
+
         manager.draw_ui(screen)
         if sim is not None:
             for agent in sim.get_agents():
                 ax, ay = world_to_screen(agent.x_m, agent.y_m)
                 color = (70, 130, 220) if agent.agent_type == "car" else (220, 80, 80)
                 pygame.draw.circle(screen, color, (ax, ay), 5)
-                pygame.display.flip()
+        
+        pygame.display.flip()
 
     pygame.quit()
 

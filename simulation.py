@@ -75,6 +75,9 @@ STOP_LINE_OFFSET_M = 5.0
 STOPPED_SPEED_THRESHOLD_MS = 0.5
 DRIVER_REACTION_TIME_S = 1.0
 QUEUE_DETECTION_ZONE_M = 50.0
+VIRTUAL_QUEUE_CAP = 50
+SOURCE_ENTRY_MIN_GAP_M = 15.0
+
 # Phase sequence — signals cycle in this exact order.
 PHASE_SEQUENCE = [
     "NS_GREEN",
@@ -171,6 +174,13 @@ class IntersectionState:
     pending_cycle_length_s: Optional[float] = None
     pending_green_ns_s: Optional[float] = None
     pending_green_ew_s: Optional[float] = None
+
+    # Per-cycle flow accumulation (Phase 7).
+    # Cleared on entering NS_GREEN. At the start of NS_GREEN we convert
+    # the previous cycle's accumulated counts to veh/hr and snapshot them.
+    cycle_departures_accum: Dict[str, int] = field(
+        default_factory=lambda: {"N": 0, "S": 0, "E": 0, "W": 0}
+    )
 
 @dataclass
 class SimulationState:
@@ -349,6 +359,28 @@ class Signal:
             return ALL_RED_DURATION_S
         return 0.0
 
+    def _snapshot_cycle_flows(self, istate, sim_time_s):
+        """
+        At the NS_GREEN boundary, convert the just-completed cycle's
+        accumulated departures to veh/hr and store them as last_cycle_flows.
+        Then reset the accumulator for the upcoming cycle.
+
+        Uses the actual cycle duration (sim_time_s - cycle_start_time_s)
+        so the conversion is accurate even if cycle length was changed.
+        """
+        cycle_duration = sim_time_s - istate.cycle_start_time_s
+        if cycle_duration <= 0:
+            # First cycle; nothing to snapshot
+            for d in ("N", "S", "E", "W"):
+                istate.cycle_departures_accum[d] = 0
+            return
+
+        for d in ("N", "S", "E", "W"):
+            count = istate.cycle_departures_accum[d]
+            flow_vph = (count / cycle_duration) * 3600.0
+            istate.last_cycle_flows[d] = flow_vph
+            istate.cycle_departures_accum[d] = 0
+
     def _apply_pending_timing(self, istate, sim_time_s):
         """
         Swap in any queued cycle_length / green_ns / green_ew from the
@@ -388,8 +420,11 @@ class Signal:
         self.current_phase = PHASE_SEQUENCE[self.phase_idx]
         self.time_in_phase_s = 0.0
 
-        # Entering NS_GREEN means a new cycle has begun
+        # Entering NS_GREEN means a new cycle has begun.
+        # Snapshot the just-completed cycle's flows BEFORE resetting
+        # cycle_start_time_s, then stamp the new cycle start.
         if self.current_phase == "NS_GREEN":
+            self._snapshot_cycle_flows(istate, sim_time_s)
             self.cycle_start_time_s = sim_time_s
             self._apply_pending_timing(istate, sim_time_s)
 
@@ -470,6 +505,22 @@ class Simulation:
         # Fast-forward integer multiplier. main.py decides how many
         # step() calls happen per rendered frame based on this.
         self.speed_multiplier = 1
+
+        # OD demand: od_matrix[origin_int_id][dest_int_id] = veh/hr
+        # Empty by default. Use set_od_matrix() or set_demand_preset() to populate.
+        self.od_matrix: Dict[str, Dict[str, float]] = {}
+        self.demand_scale = 1.0
+
+        # Virtual queues per origin intersection (agents waiting to spawn)
+        # Keyed by intersection id; value is count of agents pending.
+        self._virtual_queue: Dict[str, int] = {}
+        for inter in network.intersections:
+            if network.is_perimeter(inter.id):
+                self._virtual_queue[inter.id] = 0
+
+        # Cache reachable origin→destination pairs so we don't compute
+        # shortest paths for impossible pairs every tick.
+        self._valid_od_pairs = None  # populated on first use
 
     # ----------------- Control API (called by main.py) -----------------
 
@@ -554,6 +605,137 @@ class Simulation:
         self._scheduled_spawns.append((spawn_time_s, route, agent_type))
         self._scheduled_spawns.sort(key=lambda t: t[0])
 
+    # ----------------- OD demand management (Phase 7) -----------------
+
+    def set_od_matrix(self, od_matrix):
+        """
+        Replace the OD matrix.
+          od_matrix: dict of dicts, od_matrix[origin_id][dest_id] = veh/hr
+        Only perimeter intersections should appear as keys. Values
+        with demand <= 0 are treated as no demand.
+        """
+        self.od_matrix = {}
+        for origin_id, dests in od_matrix.items():
+            if not self.network.is_perimeter(origin_id):
+                continue
+            self.od_matrix[origin_id] = {}
+            for dest_id, rate in dests.items():
+                if not self.network.is_perimeter(dest_id):
+                    continue
+                if origin_id == dest_id:
+                    continue
+                if rate > 0:
+                    self.od_matrix[origin_id][dest_id] = float(rate)
+        self._valid_od_pairs = None  # invalidate cache
+
+    def set_demand_scale(self, scale):
+        """Set the master demand multiplier. Typical range: 0.0 to 2.0."""
+        self.demand_scale = max(0.0, float(scale))
+
+    def _source_has_room(self, origin_id):
+        """
+        Check whether the source terminal for this origin has physical
+        room for a new agent. Inspect the inbound terminal link — if any
+        existing agent is within SOURCE_ENTRY_MIN_GAP_M of the terminal
+        start, return False.
+        """
+        # Find any inbound terminal link attached to this intersection.
+        # Any one is fine — if the spawner picks a different terminal
+        # link, we'll re-check per spawn.
+        inbound_links = [
+            lnk for lnk in self.network.terminal_links
+            if lnk.in_or_out == "in" and lnk.to_int.id == origin_id
+        ]
+        if not inbound_links:
+            return False
+
+        # Check every agent on any inbound terminal link for this intersection
+        for lnk in inbound_links:
+            for agent in self.agents:
+                if not agent.active:
+                    continue
+                if agent.current_link() is None:
+                    continue
+                if agent.current_link().id == lnk.id:
+                    if agent.position_on_link_m < SOURCE_ENTRY_MIN_GAP_M:
+                        return False
+        return True
+
+    def _try_spawn_od(self, origin_id, dest_id):
+        """
+        Attempt to spawn an agent from origin to destination.
+        Returns True if spawned, False if queued virtually or denied.
+        """
+        if not self._source_has_room(origin_id):
+            # Source is physically occupied; queue virtually
+            self._virtual_queue[origin_id] = self._virtual_queue.get(origin_id, 0) + 1
+            if self._virtual_queue[origin_id] > VIRTUAL_QUEUE_CAP:
+                # Overflow — count as denied entry, drop the virtual addition
+                self._virtual_queue[origin_id] = VIRTUAL_QUEUE_CAP
+                self.state.denied_entries_total += 1
+                self.state.denied_entries_this_step += 1
+            return False
+
+        # Physical room exists. Build the route.
+        route = self.network.shortest_path(origin_id, dest_id, self.rng)
+        if not route:
+            # No path available (shouldn't happen on a connected grid, but guard)
+            return False
+
+        self.spawn_agent(route, agent_type="car")
+        return True
+
+    def _drain_virtual_queues(self):
+        """
+        Each tick, try to physically spawn one pending agent per source
+        with a non-empty virtual queue. We pick the destination randomly
+        weighted by OD demand for this origin.
+        """
+        for origin_id, pending in list(self._virtual_queue.items()):
+            if pending <= 0:
+                continue
+            if not self._source_has_room(origin_id):
+                continue
+
+            # Pick a destination weighted by OD demand from this origin
+            dests = self.od_matrix.get(origin_id, {})
+            if not dests:
+                # No demand from this origin; leave virtual queue alone
+                # (would be odd — it shouldn't have queued without demand — but safe)
+                continue
+
+            dest_ids = list(dests.keys())
+            weights = np.array([dests[d] for d in dest_ids], dtype=float)
+            if weights.sum() <= 0:
+                continue
+            weights /= weights.sum()
+            dest_id = self.rng.choice(dest_ids, p=weights)
+
+            route = self.network.shortest_path(origin_id, dest_id, self.rng)
+            if not route:
+                continue
+
+            self.spawn_agent(route, agent_type="car")
+            self._virtual_queue[origin_id] = pending - 1
+
+    def _generate_poisson_arrivals(self, dt):
+        """
+        For every (origin, destination) in the OD matrix, draw a Bernoulli
+        per tick with probability = rate_per_s × dt × demand_scale. If it
+        fires, try to spawn.
+        """
+        if not self.od_matrix or self.demand_scale == 0.0:
+            return
+
+        for origin_id, dests in self.od_matrix.items():
+            for dest_id, rate_vph in dests.items():
+                rate_per_s = rate_vph / 3600.0
+                p = rate_per_s * dt * self.demand_scale
+                # Cap probability at 1.0 to be safe against overlong dt
+                p = min(p, 1.0)
+                if self.rng.random() < p:
+                    self._try_spawn_od(origin_id, dest_id)
+
     # ----------------- Main step -----------------
 
     def step(self, dt):
@@ -586,6 +768,11 @@ class Simulation:
         while self._scheduled_spawns and self._scheduled_spawns[0][0] <= self.state.time_s:
             _, route, agent_type = self._scheduled_spawns.pop(0)
             self.spawn_agent(route, agent_type)
+            # 2b. Generate Poisson OD arrivals (Phase 7)
+            self._generate_poisson_arrivals(dt)
+
+            # 2c. Attempt to drain any virtual queues that are pending
+            self._drain_virtual_queues()
 
         # 3. Step signals; mirror their state into IntersectionState for metrics.py
         for sig in self.signals.values():
@@ -897,7 +1084,8 @@ class Simulation:
             agent._prev_position_on_link_m = agent.position_on_link_m
             agent._prev_link_id = link.id
 
-        # Append non-zero this-step counts to the cumulative logs
+        # Append non-zero this-step counts to the cumulative logs,
+        # and accumulate departures for the current signal cycle.
         for istate in self.state.intersections.values():
             for d in ("N", "S", "E", "W"):
                 a = istate.arrivals_this_step[d]
@@ -906,3 +1094,5 @@ class Simulation:
                 dep = istate.departures_this_step[d]
                 if dep > 0:
                     istate.departures_by_approach[d].append((self.state.time_s, dep))
+                # Per-cycle flow accumulator (reset at NS_GREEN entry by Signal)
+                istate.cycle_departures_accum[d] += dep
