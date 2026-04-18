@@ -48,13 +48,30 @@ class Intersection:
 
 
 class Link:
-    def __init__(self, id, from_int, to_int, length_m, lanes, is_terminal_link=False):
+    def __init__(
+        self,
+        id,
+        from_int,
+        to_int,
+        length_m,
+        lanes,
+        is_terminal_link=False,
+        boundary_side=None,
+        in_or_out=None
+    ):
         self.id = id
         self.from_int = from_int
         self.to_int = to_int
         self.length_m = length_m
         self.lanes = lanes
+
         self.is_terminal_link = is_terminal_link
+
+        # For terminal links only:
+        # boundary_side in {"N", "S", "E", "W"}
+        # in_or_out in {"in", "out"}
+        self.boundary_side = boundary_side
+        self.in_or_out = in_or_out
 
     def get_midpoint(self):
         return (
@@ -68,8 +85,94 @@ class Link:
     def is_vertical(self):
         return self.from_int.col == self.to_int.col
 
+    def direction_vector(self):
+        dx = self.to_int.x_m - self.from_int.x_m
+        dy = self.to_int.y_m - self.from_int.y_m
+        length = max(math.sqrt(dx * dx + dy * dy), 1e-6)
+        return dx / length, dy / length
+
+    def angle(self):
+        dx = self.to_int.x_m - self.from_int.x_m
+        dy = self.to_int.y_m - self.from_int.y_m
+        return math.atan2(dy, dx)
+
+    def point_at_fraction(self, f):
+        x = self.from_int.x_m + f * (self.to_int.x_m - self.from_int.x_m)
+        y = self.from_int.y_m + f * (self.to_int.y_m - self.from_int.y_m)
+        return x, y
 
 class Network:
+    def get_terminal_nodes(self):
+        return self.terminals
+
+    def get_terminal_links(self):
+        """
+        Returns all terminal links.
+        Keep this no-argument version for main.py drawing.
+        """
+        return self.terminal_links
+
+    def get_terminal_links_for_intersection(self, intersection_id):
+        """
+        Returns terminal links attached to the given real intersection.
+        Empty list for interior intersections or unknown IDs.
+        """
+        if not self.is_perimeter(intersection_id):
+            return []
+
+        attached = []
+        for link in self.terminal_links:
+            if link.from_int.id == intersection_id or link.to_int.id == intersection_id:
+                attached.append(link)
+        return attached
+
+    def get_inbound_terminals(self):
+        return [t for t in self.terminals if t.terminal_type == "in"]
+
+    def get_outbound_terminals(self):
+        return [t for t in self.terminals if t.terminal_type == "out"]
+
+    def get_terminal_by_id(self, terminal_id):
+        for terminal in self.terminals:
+            if terminal.id == terminal_id:
+                return terminal
+        return None
+
+    def get_real_intersection_by_id(self, intersection_id):
+        for inter in self.intersections:
+            if inter.id == intersection_id:
+                return inter
+        return None
+
+    def get_node_by_id(self, node_id):
+        node = self.get_real_intersection_by_id(node_id)
+        if node is not None:
+            return node
+        return self.get_terminal_by_id(node_id)
+
+    def get_link_by_id(self, link_id):
+        for link in self.get_all_links():
+            if link.id == link_id:
+                return link
+        return None
+
+    def get_outgoing_links(self, node_id):
+        links = []
+        for link in self.get_all_links():
+            if link.from_int.id == node_id:
+                links.append(link)
+        return links
+
+    def get_incoming_links(self, node_id):
+        links = []
+        for link in self.get_all_links():
+            if link.to_int.id == node_id:
+                links.append(link)
+        return links
+
+    def path_length(self, link_path):
+        return sum(link.length_m for link in link_path)
+
     def is_perimeter(self, intersection_id):
         inter = self.get_real_intersection_by_id(intersection_id)
         if inter is None:
@@ -82,7 +185,151 @@ class Network:
             inter.col == self.cols - 1
         )
 
-    def get_terminal_links(self, intersection_id):
+    def get_terminal_link(self, intersection_id, direction, in_or_out):
+        """
+        Returns the terminal link attached to a perimeter intersection
+        for a given side and direction.
+
+        direction: "N", "S", "E", or "W"
+        in_or_out: "in" or "out"
+        """
+        if not self.is_perimeter(intersection_id):
+            return None
+
+        direction = direction.upper()
+        in_or_out = in_or_out.lower()
+
+        for link in self.terminal_links:
+            attached = (
+                link.from_int.id == intersection_id or
+                link.to_int.id == intersection_id
+            )
+
+            if attached and link.boundary_side == direction and link.in_or_out == in_or_out:
+                return link
+
+        return None
+
+    def _default_terminal_side(self, intersection_id):
+        """
+        Deterministic default side for a perimeter intersection.
+        Useful when shortest_path is called with only intersection IDs.
+
+        Priority:
+        N -> S -> W -> E
+        """
+        inter = self.get_real_intersection_by_id(intersection_id)
+        if inter is None:
+            return None
+
+        if inter.row == 0:
+            return "N"
+        if inter.row == self.rows - 1:
+            return "S"
+        if inter.col == 0:
+            return "W"
+        if inter.col == self.cols - 1:
+            return "E"
+
+        return None
+
+    def _get_edge_link_object(self, from_node_id, to_node_id):
+        if self.graph.has_edge(from_node_id, to_node_id):
+            return self.graph[from_node_id][to_node_id]["obj"]
+        return None
+
+    def shortest_path(self, origin_intersection_id, dest_intersection_id, rng):
+        """
+        Returns a list of Link objects from inbound terminal link at origin
+        to outbound terminal link at destination.
+
+        Uses Dijkstra with per-agent perturbed weights:
+            link.length_m * (1 + rng.uniform(-0.1, 0.1))
+
+        origin_intersection_id and dest_intersection_id are expected to be
+        REAL perimeter intersection IDs.
+        """
+        if not self.is_perimeter(origin_intersection_id):
+            return []
+        if not self.is_perimeter(dest_intersection_id):
+            return []
+
+        origin_side = self._default_terminal_side(origin_intersection_id)
+        dest_side = self._default_terminal_side(dest_intersection_id)
+
+        if origin_side is None or dest_side is None:
+            return []
+
+        origin_entry_link = self.get_terminal_link(origin_intersection_id, origin_side, "in")
+        dest_exit_link = self.get_terminal_link(dest_intersection_id, dest_side, "out")
+
+        if origin_entry_link is None or dest_exit_link is None:
+            return []
+
+        origin_terminal_id = origin_entry_link.from_int.id
+        dest_terminal_id = dest_exit_link.to_int.id
+
+        temp_graph = nx.DiGraph()
+
+        for node_id, node_data in self.graph.nodes(data=True):
+            temp_graph.add_node(node_id, **node_data)
+
+        for u, v, edge_data in self.graph.edges(data=True):
+            link = edge_data["obj"]
+            weight = link.length_m * (1 + rng.uniform(-0.1, 0.1))
+            weight = max(weight, 1e-6)
+            temp_graph.add_edge(u, v, weight=weight)
+
+        try:
+            node_path = nx.shortest_path(
+                temp_graph,
+                origin_terminal_id,
+                dest_terminal_id,
+                weight="weight"
+            )
+        except nx.NetworkXNoPath:
+            return []
+        except nx.NodeNotFound:
+            return []
+
+        link_path = []
+        for i in range(len(node_path) - 1):
+            u = node_path[i]
+            v = node_path[i + 1]
+            link = self._get_edge_link_object(u, v)
+            if link is None:
+                return []
+            link_path.append(link)
+
+        return link_path
+    def path_length(self, link_path):
+        return sum(link.length_m for link in link_path)
+    def get_outgoing_links(self, node_id):
+        links = []
+        for link in self.get_all_links():
+            if link.from_int.id == node_id:
+                links.append(link)
+        return links
+
+    def get_incoming_links(self, node_id):
+        links = []
+        for link in self.get_all_links():
+            if link.to_int.id == node_id:
+                links.append(link)
+        return links
+    def is_perimeter(self, intersection_id):
+        inter = self.get_real_intersection_by_id(intersection_id)
+        if inter is None:
+            return False
+
+        return (
+            inter.row == 0 or
+            inter.row == self.rows - 1 or
+            inter.col == 0 or
+            inter.col == self.cols - 1
+        )
+
+    def get_terminal_links_for_intersection(self, intersection_id):
         """
         Returns terminal Link objects attached to the given real intersection.
         Returns [] for interior intersections or unknown IDs.
@@ -316,6 +563,14 @@ class Network:
         """
         Create one inbound and one outbound terminal for a perimeter intersection.
         """
+        side_map = {
+            "TOP": "N",
+            "BOTTOM": "S",
+            "LEFT": "W",
+            "RIGHT": "E",
+        }
+        boundary_side = side_map[boundary_name]
+
         x = base_intersection.x_m + dx
         y = base_intersection.y_m + dy
 
@@ -348,7 +603,9 @@ class Network:
             to_int=base_intersection,
             length_m=0,
             lanes=DEFAULT_LANES,
-            is_terminal_link=True
+            is_terminal_link=True,
+            boundary_side=boundary_side,
+            in_or_out="in"
         )
 
         out_link = Link(
@@ -357,12 +614,13 @@ class Network:
             to_int=out_terminal,
             length_m=0,
             lanes=DEFAULT_LANES,
-            is_terminal_link=True
+            is_terminal_link=True,
+            boundary_side=boundary_side,
+            in_or_out="out"
         )
 
         self.terminal_links.append(in_link)
         self.terminal_links.append(out_link)
-
     # =========================================================
     # GRAPH
     # =========================================================
@@ -544,7 +802,7 @@ class Network:
 
     def get_internal_links(self):
         return self.links
-        def get_inbound_terminals(self):
+    def get_inbound_terminals(self):
             return [t for t in self.terminals if t.terminal_type == "in"]
 
     def get_outbound_terminals(self):
