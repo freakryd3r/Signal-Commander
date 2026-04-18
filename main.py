@@ -471,8 +471,11 @@ def main():
                     status_label.set_text("Network created (paused)")
 
                 if event.ui_element == start_button and sim is not None:
-                    sim.resume()
-                    status_label.set_text("Simulation started")
+                    if sim.state.sim_completed:
+                        status_label.set_text("Simulation complete — press Reset")
+                    else:
+                        sim.resume()
+                        status_label.set_text("Simulation started")
 
                 if event.ui_element == pause_button and sim is not None:
                     sim.pause()
@@ -611,10 +614,16 @@ def main():
         manager.update(dt)
 
         # Refresh the sim status label every frame
+        # Refresh the sim status label every frame
         if sim is not None:
-            running_text = "RUNNING" if sim.state.sim_running else "PAUSED"
+            if sim.state.sim_completed:
+                running_text = "COMPLETED"
+            elif sim.state.sim_running:
+                running_text = "RUNNING"
+            else:
+                running_text = "PAUSED"
             sim_status_label.set_text(
-                f"{running_text}  |  t = {sim.state.time_s:.1f}s"
+                f"{running_text}  |  t = {sim.state.time_s:.1f}s / 3600s"
             )
 
         # Refresh metric panels every METRICS_UPDATE_INTERVAL_S simulated seconds
@@ -795,6 +804,41 @@ def main():
                     radius = 5
                 pygame.draw.circle(screen, color, (ax, ay), radius)
         
+        # Simulation Complete overlay
+        if sim is not None and sim.state.sim_completed:
+            # Semi-transparent dark panel across the middle of the canvas
+            overlay_w = 400
+            overlay_h = 120
+            overlay_x = (CANVAS_WIDTH - overlay_w) // 2
+            overlay_y = (CANVAS_HEIGHT - overlay_h) // 2
+
+            # Dark translucent background
+            overlay_surface = pygame.Surface((overlay_w, overlay_h), pygame.SRCALPHA)
+            overlay_surface.fill((20, 25, 35, 220))
+            screen.blit(overlay_surface, (overlay_x, overlay_y))
+
+            # Gold border
+            pygame.draw.rect(
+                screen,
+                (220, 180, 60),
+                pygame.Rect(overlay_x, overlay_y, overlay_w, overlay_h),
+                3,
+            )
+
+            # Main text
+            big_font = pygame.font.SysFont("Arial", 32, bold=True)
+            small_font = pygame.font.SysFont("Arial", 16)
+            line1 = big_font.render("SIMULATION COMPLETE", True, (255, 255, 255))
+            line2 = small_font.render(
+                f"1-hour run finished — click Reset to restart",
+                True,
+                (200, 200, 210),
+            )
+            line1_rect = line1.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 45))
+            line2_rect = line2.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 85))
+            screen.blit(line1, line1_rect)
+            screen.blit(line2, line2_rect)
+
         pygame.display.flip()
 
     pygame.quit()
