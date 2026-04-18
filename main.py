@@ -787,8 +787,13 @@ def main():
         if sim is not None:
             for agent in sim.get_agents():
                 ax, ay = world_to_screen(agent.x_m, agent.y_m)
-                color = (70, 130, 220) if agent.agent_type == "car" else (220, 80, 80)
-                pygame.draw.circle(screen, color, (ax, ay), 5)
+                if agent.agent_type == "bus":
+                    color = (220, 80, 80)
+                    radius = 7
+                else:
+                    color = (70, 130, 220)
+                    radius = 5
+                pygame.draw.circle(screen, color, (ax, ay), radius)
         
         pygame.display.flip()
 
