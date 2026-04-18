@@ -686,8 +686,11 @@ class Simulation:
 
         # Look up the terminal links using the default-side logic
         # already built into network.shortest_path.
-        origin_side = self.network._default_terminal_side(origin_id)
-        dest_side = self.network._default_terminal_side(dest_id)
+        # Pick terminal sides. Corner intersections have 2 valid sides;
+        # pick randomly for spatial balance. Middle-edge intersections
+        # have only 1 side, which is picked deterministically.
+        origin_side = self._pick_random_terminal_side(origin_id, "in")
+        dest_side = self._pick_random_terminal_side(dest_id, "out")
         if origin_side is None or dest_side is None:
             return False
 
@@ -699,6 +702,33 @@ class Simulation:
         route = [inbound] + interior + [outbound]
         self.spawn_agent(route, agent_type="car")
         return True
+
+    def _available_terminal_sides(self, intersection_id, in_or_out):
+        """
+        Return list of valid terminal sides ("N", "S", "E", "W") for this
+        perimeter intersection. Corner intersections return 2 sides;
+        middle-edge intersections return 1.
+        """
+        sides = []
+        for side in ("N", "S", "E", "W"):
+            link = self.network.get_terminal_link(intersection_id, side, in_or_out)
+            if link is not None:
+                sides.append(side)
+        return sides
+
+    def _pick_random_terminal_side(self, intersection_id, in_or_out):
+        """
+        Pick a terminal side (randomly for corners, deterministically for
+        middle-edge) using this simulation's RNG so results are reproducible.
+        """
+        sides = self._available_terminal_sides(intersection_id, in_or_out)
+        if not sides:
+            return None
+        if len(sides) == 1:
+            return sides[0]
+        # Multiple sides: pick with RNG
+        idx = int(self.rng.integers(0, len(sides)))
+        return sides[idx]
 
     def _drain_virtual_queues(self):
         """
@@ -730,8 +760,8 @@ class Simulation:
             if not interior:
                 continue
 
-            origin_side = self.network._default_terminal_side(origin_id)
-            dest_side = self.network._default_terminal_side(dest_id)
+            origin_side = self._pick_random_terminal_side(origin_id, "in")
+            dest_side = self._pick_random_terminal_side(dest_id, "out")
             if origin_side is None or dest_side is None:
                 continue
 
