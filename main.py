@@ -1,6 +1,8 @@
 import pygame
 import pygame_gui
 import math
+import os
+from datetime import datetime
 from simulation import Simulation
 from debug import setup_debug_one_car, setup_am_peak
 from metrics import MetricsEngine, websters_optimal_cycle_simple
@@ -486,6 +488,87 @@ def main():
                     selected_intersection = None
                     selected_link = None
                     status_label.set_text("Simulation reset (paused)")
+                
+                # ===== Phase 8 Block C: action button handlers =====
+
+                if event.ui_element == webster_button and sim is not None:
+                    # Compute Webster's optimal cycle for the currently
+                    # selected intersection based on its measured last-cycle flows.
+                    if current_mode != "intersection" or selected_intersection is None:
+                        webster_result_label.set_text(
+                            "Select an intersection first"
+                        )
+                    else:
+                        istate = sim.state.intersections[selected_intersection.id]
+                        try:
+                            rec = websters_optimal_cycle_simple(
+                                istate,
+                                yellow_s=3.0,
+                                all_red_s=2.0,
+                            )
+                            pending_webster_recommendation = {
+                                "intersection_id": selected_intersection.id,
+                                "cycle_length_s": rec["optimal_cycle_s"],
+                                "green_ns_s": rec["green_ns_s"],
+                                "green_ew_s": rec["green_ew_s"],
+                                "was_clamped": rec["was_y_clamped"],
+                            }
+                            clamp_note = " [Y CLAMPED]" if rec["was_y_clamped"] else ""
+                            webster_result_label.set_text(
+                                f"C={rec['optimal_cycle_s']:.0f}s "
+                                f"NS={rec['green_ns_s']:.0f} "
+                                f"EW={rec['green_ew_s']:.0f}"
+                                f"{clamp_note}"
+                            )
+                            apply_webster_button.enable()
+                        except ValueError as err:
+                            webster_result_label.set_text(f"Error: {err}")
+                            pending_webster_recommendation = None
+                            apply_webster_button.disable()
+
+                if event.ui_element == apply_webster_button and sim is not None:
+                    if pending_webster_recommendation is None:
+                        webster_result_label.set_text("No recommendation pending")
+                    else:
+                        iid = pending_webster_recommendation["intersection_id"]
+                        istate = sim.state.intersections.get(iid)
+                        if istate is None:
+                            webster_result_label.set_text("Intersection not found")
+                        else:
+                            # Queue the timing change at next NS_GREEN boundary.
+                            # simulation.py applies pending_* fields on cycle entry.
+                            istate.pending_cycle_length_s = pending_webster_recommendation["cycle_length_s"]
+                            istate.pending_green_ns_s = pending_webster_recommendation["green_ns_s"]
+                            istate.pending_green_ew_s = pending_webster_recommendation["green_ew_s"]
+                            webster_result_label.set_text(
+                                f"Applied to {iid} at next cycle"
+                            )
+                            pending_webster_recommendation = None
+                            apply_webster_button.disable()
+
+                if event.ui_element == heatmap_button:
+                    heatmap_enabled = not heatmap_enabled
+                    heatmap_button.set_text(
+                        f"Heatmap: {'ON' if heatmap_enabled else 'OFF'}"
+                    )
+
+                if event.ui_element == csv_export_button and sim is not None:
+                    # Export two CSV files with a timestamped suffix so
+                    # multiple exports don't overwrite each other.
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    per_int_path = f"metrics_per_intersection_{timestamp}.csv"
+                    net_path = f"metrics_network_{timestamp}.csv"
+                    try:
+                        metrics_engine.export_csv(
+                            sim_state=sim.get_state(),
+                            per_intersection_path=per_int_path,
+                            network_path=net_path,
+                        )
+                        status_label.set_text(
+                            f"CSV saved: {os.path.basename(per_int_path)}"
+                        )
+                    except Exception as err:
+                        status_label.set_text(f"Export failed: {err}")
 
                 if event.ui_element == apply_button and network is not None:
                     if current_mode == "intersection" and selected_intersection is not None:
@@ -605,6 +688,15 @@ def main():
 
                 color = LINK_COLOR
                 width = 4
+
+                # Heatmap overlay: color by live link density
+                if heatmap_enabled and sim is not None:
+                    lstate = sim.state.links.get(link.id)
+                    if lstate is not None:
+                        color = metrics_engine.get_link_heatmap_color(
+                            lstate.density_veh_per_km
+                        )
+                        width = 6
 
                 if selected_link is not None and link.id == selected_link.id:
                     color = SELECTED_COLOR
