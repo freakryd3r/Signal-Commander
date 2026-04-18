@@ -41,7 +41,8 @@ JAM_DENSITY = 1.0 / JAM_SPACING   # veh/m
 # Signal timing defaults
 # =============================================================================
 DEFAULT_CYCLE = 60.0        # sec
-MIN_CYCLE = 30.0
+MIN_CYCLE = 40.0            # sec (physical floor: 4 phases x 5s min + 16s clearance = 36s,
+                            #      we add 4s margin so sliders behave cleanly)
 MAX_CYCLE = 180.0
 
 YELLOW_TIME = 3.0           # sec
