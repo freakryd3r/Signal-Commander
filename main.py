@@ -313,6 +313,44 @@ def main():
         manager=manager
     )
 
+# ===== Phase 10b Block B1: Bus Editor toggle and panel =====
+    BUS_PANEL_Y = 945
+    BUS_PANEL_ROW_HEIGHT = 28
+
+    bus_toggle_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, BUS_PANEL_Y), (SIDEBAR_WIDTH - 20, 28)),
+        text="> Bus Editor",
+        manager=manager,
+    )
+
+    bus_editor_banner_rect = pygame.Rect(10, 10, CANVAS_WIDTH - 20, 36)
+
+    bus_editor_widgets = []
+
+    bus_section_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, BUS_PANEL_Y + 35), (SIDEBAR_WIDTH - 20, 22)),
+        text="— BUS LINES —",
+        manager=manager,
+    )
+    bus_editor_widgets.append(bus_section_label)
+
+    add_line_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, BUS_PANEL_Y + 60), (120, 28)),
+        text="+ Add Line",
+        manager=manager,
+    )
+    bus_editor_widgets.append(add_line_button)
+
+    bus_status_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, BUS_PANEL_Y + 95), (SIDEBAR_WIDTH - 20, 22)),
+        text="",
+        manager=manager,
+    )
+    bus_editor_widgets.append(bus_status_label)
+
+    for widget in bus_editor_widgets:
+        widget.hide()
+
     info_label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 245), (SIDEBAR_WIDTH - 20, 24)),
         text="Click an intersection or link",
@@ -372,6 +410,13 @@ def main():
     current_mode = "none"
     sim_time_accumulator = 0.0
     prev_agent_positions = {}
+    # ===== Phase 10b: Bus Editor state =====
+    bus_editor_expanded = False
+    bus_editor_mode = "none"  # "none" | "route" | "stops"
+    selected_bus_line_id = None
+    # Working buffer used while editing a route or stops (before Save)
+    route_draft = []              # list of intersection IDs
+    stops_draft = []              # list of BusStop dicts for a line being edited
 
     def clear_fields():
         field1_input.set_text("")
@@ -470,6 +515,15 @@ def main():
                     else:
                         info_label.set_text("Click an intersection or link")
                         clear_selection_ui()
+            
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    if bus_editor_mode in ("route", "stops"):
+                        bus_editor_mode = "none"
+                        # Discard drafts on ESC
+                        route_draft = []
+                        stops_draft = []
+                        bus_status_label.set_text("Edit mode canceled")
 
             if event.type == pygame_gui.UI_BUTTON_PRESSED:
                 if event.ui_element == create_network_button:
@@ -619,6 +673,23 @@ def main():
                         )
                     except Exception as err:
                         status_label.set_text(f"Export failed: {err}")
+
+                if event.ui_element == bus_toggle_button:
+                    bus_editor_expanded = not bus_editor_expanded
+                    if bus_editor_expanded:
+                        bus_toggle_button.set_text("▼ Bus Editor")
+                        for widget in bus_editor_widgets:
+                            widget.show()
+                    else:
+                        bus_toggle_button.set_text("▶ Bus Editor")
+                        for widget in bus_editor_widgets:
+                            widget.hide()
+                        # Exit any active edit mode when collapsing
+                        bus_editor_mode = "none"
+                        selected_bus_line_id = None
+
+                if event.ui_element == add_line_button and sim is not None:
+                    bus_status_label.set_text("Add Line clicked (B2 in next step)")
 
                 if event.ui_element == apply_button and network is not None:
                     if current_mode == "intersection" and selected_intersection is not None:
@@ -884,6 +955,22 @@ def main():
                     radius = 5
                 pygame.draw.circle(screen, color, (ax, ay), radius)
         
+        # Bus editor mode banner (shown when actively editing a route or stops)
+        if bus_editor_mode in ("route", "stops"):
+            banner_font = pygame.font.SysFont("Arial", 18, bold=True)
+            if bus_editor_mode == "route":
+                banner_text = f"EDITING ROUTE: {selected_bus_line_id}  —  click intersections in order, ESC to finish"
+            else:
+                banner_text = f"EDITING STOPS: {selected_bus_line_id}  —  click a link to add/remove stops, ESC to finish"
+
+            # Solid banner background
+            pygame.draw.rect(screen, (220, 150, 30), bus_editor_banner_rect)
+            pygame.draw.rect(screen, (120, 80, 10), bus_editor_banner_rect, 2)
+
+            banner_surface = banner_font.render(banner_text, True, (0, 0, 0))
+            banner_rect = banner_surface.get_rect(center=bus_editor_banner_rect.center)
+            screen.blit(banner_surface, banner_rect)
+
         # Simulation Complete overlay
         if sim is not None and sim.state.sim_completed:
             # Semi-transparent dark panel across the middle of the canvas
