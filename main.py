@@ -18,7 +18,7 @@ TERMINAL_LINK_COLOR = (120, 120, 120)
 TERMINAL_NODE_IN_COLOR = (80, 170, 255)
 TERMINAL_NODE_OUT_COLOR = (255, 140, 140)
 SELECTED_COLOR = (255, 220, 80)
-SIDEBAR_TOP_OFFSET = 85  # pushes sidebar widgets below the SIGNAL LORD title
+SIDEBAR_TOP_OFFSET = 85  # pushes sidebar widgets below the SIGNAL COMMANDER title
 SIDEBAR_LEFT = 1400 - SIDEBAR_WIDTH # sidebar anchored 175px left of original CANVAS_WIDTH
 SIDEBAR_INPUT_X = SIDEBAR_LEFT + 130  # where input fields start
 SIDEBAR_CENTER = SIDEBAR_LEFT + SIDEBAR_WIDTH // 2  # vertical centerline x-coordinate
@@ -129,7 +129,7 @@ def draw_signal_head(screen, center_x, center_y, approach_angle_rad, phase_state
 
 def main():
     pygame.init()
-    pygame.display.set_caption("Signal Lord")
+    pygame.display.set_caption("Signal Commander")
     info = pygame.display.Info()
     screen = pygame.display.set_mode(
         (info.current_w, info.current_h),
@@ -584,7 +584,7 @@ def main():
                         # Tear down and rebuild the display to clear NOFRAME flag
                         pygame.display.quit()
                         pygame.display.init()
-                        pygame.display.set_caption("Signal Lord")
+                        pygame.display.set_caption("Signal Commander")
                         screen = pygame.display.set_mode(windowed_size, pygame.RESIZABLE)
                         is_fullscreen = False
                         if hasattr(manager, 'set_window_resolution'):
@@ -1006,15 +1006,15 @@ def main():
 
         manager.draw_ui(screen)
 
-        # ===== Title rendering: SIGNAL LORD =====
+        # ===== Title rendering: SIGNAL COMMANDER =====
         try:
             title_font = pygame.font.SysFont("Impact", 32, bold=False)
         except Exception:
             title_font = pygame.font.SysFont("Arial", 32, bold=False)
 
         # Shadow layer — slight offset, subtle dark color
-        shadow = title_font.render("SIGNAL LORD", True, (30, 30, 35))
-        title_surface = title_font.render("SIGNAL LORD", True, (240, 200, 60))
+        shadow = title_font.render("SIGNAL COMMANDER", True, (30, 30, 35))
+        title_surface = title_font.render("SIGNAL COMMANDER", True, (240, 200, 60))
 
         title_x = title_x = SIDEBAR_LEFT + (SIDEBAR_WIDTH - title_surface.get_width()) // 2 + 40
         title_y = 7
