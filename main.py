@@ -119,7 +119,7 @@ def draw_signal_head(screen, center_x, center_y, approach_angle_rad, phase_state
 def main():
     pygame.init()
     pygame.display.set_caption("Signal Lord")
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
     clock = pygame.time.Clock()
 
     manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -191,26 +191,47 @@ def main():
 
     # Simulation control buttons
     start_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 560), (80, 32)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 580), (80, 32)),
         text="Start",
         manager=manager
     )
 
     pause_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 100, 560), (80, 32)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 100, 580), (80, 32)),
         text="Pause",
         manager=manager
     )
 
     reset_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 190, 560), (80, 32)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 190, 580), (80, 32)),
         text="Reset",
         manager=manager
     )
 
+    realtime_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 535), (70, 32)),
+        text="1x",
+        manager=manager
+    )
+    fast5_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 90, 535), (70, 32)),
+        text="5x",
+        manager=manager
+    )
+    fast20_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 170, 535), (70, 32)),
+        text="20x",
+        manager=manager
+    )
+    fast60_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 250, 535), (70, 32)),
+        text="60x",
+        manager=manager
+    )
+
     sim_status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 600), (SIDEBAR_WIDTH - 20, 24)),
-        text="PAUSED  |  t = 0.0s",
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 620), (SIDEBAR_WIDTH - 20, 24)),
+        text="PAUSED  |  t = 0.0s / 3600s  |  Speed: 1x",
         manager=manager
     )
 
@@ -218,76 +239,76 @@ def main():
 
     # Horizontal separator visual (a simple thin label)
     pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 640), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 660), (SIDEBAR_WIDTH - 20, 24)),
         text="— NETWORK METRICS —",
         manager=manager
     )
 
     # Network metrics readout: 6 lines of key numbers
     net_completed_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 670), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 690), (SIDEBAR_WIDTH - 20, 22)),
         text="Completed trips: 0",
         manager=manager
     )
 
     net_active_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 692), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 712), (SIDEBAR_WIDTH - 20, 22)),
         text="Active vehicles: 0",
         manager=manager
     )
 
     net_delay_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 714), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 734), (SIDEBAR_WIDTH - 20, 22)),
         text="Mean delay: 0.0 s",
         manager=manager
     )
 
     net_tt_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 736), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 756), (SIDEBAR_WIDTH - 20, 22)),
         text="Mean travel time: 0.0 s",
         manager=manager
     )
 
     net_p85_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 758), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 778), (SIDEBAR_WIDTH - 20, 22)),
         text="85th %ile travel: 0.0 s",
         manager=manager
     )
 
     net_denied_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 780), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 800), (SIDEBAR_WIDTH - 20, 22)),
         text="Denied entries: 0",
         manager=manager
     )
 
     # Action buttons row
     webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 815), (170, 30)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 835), (170, 30)),
         text="Webster Optimal",
         manager=manager
     )
 
     apply_webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 185, 815), (80, 30)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 185, 835), (80, 30)),
         text="Apply",
         manager=manager
     )
     apply_webster_button.disable()  # disabled until a recommendation is computed
 
     webster_result_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 850), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 870), (SIDEBAR_WIDTH - 20, 22)),
         text="",
         manager=manager
     )
 
     heatmap_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 880), (170, 30)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 905), (170, 30)),
         text="Heatmap: OFF",
         manager=manager
     )
 
     csv_export_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 185, 880), (80, 30)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 185, 905), (80, 30)),
         text="Export CSV",
         manager=manager
     )
@@ -341,7 +362,7 @@ def main():
     )
 
     status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 510), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 500), (SIDEBAR_WIDTH - 20, 24)),
         text="",
         manager=manager
     )
@@ -349,6 +370,8 @@ def main():
     selected_intersection = None
     selected_link = None
     current_mode = "none"
+    sim_time_accumulator = 0.0
+    prev_agent_positions = {}
 
     def clear_fields():
         field1_input.set_text("")
@@ -416,6 +439,11 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
 
+            if event.type == pygame.VIDEORESIZE:
+                screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+                if hasattr(manager, 'set_window_resolution'):
+                    manager.set_window_resolution((event.w, event.h))
+
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
 
@@ -464,6 +492,7 @@ def main():
                     metrics_engine = MetricsEngine()
                     heatmap_enabled = False
                     pending_webster_recommendation = None
+                    sim_time_accumulator = 0.0
                     selected_intersection = None
                     selected_link = None
                     info_label.set_text("Network created. Click an intersection or link.")
@@ -486,11 +515,29 @@ def main():
                     # Rebuild the debug scenario so cars re-spawn at t=0 and t=3.
                     network, sim = setup_am_peak()
                     sim.pause()
+                    sim.set_speed(1)
                     metrics_engine = MetricsEngine()
                     pending_webster_recommendation = None
+                    sim_time_accumulator = 0.0
                     selected_intersection = None
                     selected_link = None
                     status_label.set_text("Simulation reset (paused)")
+
+                if event.ui_element == realtime_button and sim is not None:
+                    sim.set_speed(1)
+                    status_label.set_text("Speed: 1x (real time)")
+
+                if event.ui_element == fast5_button and sim is not None:
+                    sim.set_speed(5)
+                    status_label.set_text("Speed: 5x")
+
+                if event.ui_element == fast20_button and sim is not None:
+                    sim.set_speed(20)
+                    status_label.set_text("Speed: 20x")
+
+                if event.ui_element == fast60_button and sim is not None:
+                    sim.set_speed(60)
+                    status_label.set_text("Speed: 60x")
                 
                 # ===== Phase 8 Block C: action button handlers =====
 
@@ -623,7 +670,7 @@ def main():
             else:
                 running_text = "PAUSED"
             sim_status_label.set_text(
-                f"{running_text}  |  t = {sim.state.time_s:.1f}s / 3600s"
+                f"{running_text}  |  t = {sim.state.time_s:.1f}s / 3600s  |  Speed: {sim.speed_multiplier}x"
             )
 
         # Refresh metric panels every METRICS_UPDATE_INTERVAL_S simulated seconds
@@ -664,9 +711,24 @@ def main():
                     f"— LOS {im['los']} ({im['mean_delay_sec_per_veh']:.1f}s)"
                 )
 
+        # Physics stepping: accumulate wall-clock time × speed_multiplier,
+        # advance sim at fixed 1-second timesteps to keep car-following stable.
         if sim is not None:
-            sim.step(dt)
-            metrics_engine.update(sim.get_state())    
+            sim_time_accumulator += sim.speed_multiplier * dt
+            max_steps_per_frame = 500
+            steps_taken = 0
+            while sim_time_accumulator >= 1.0 and steps_taken < max_steps_per_frame:
+                # Snapshot BEFORE stepping so we know where each agent was.
+                # This becomes the "from" endpoint of interpolation.
+                prev_agent_positions = {
+                    a.id: (a.x_m, a.y_m, a.heading_rad)
+                    for a in sim.agents
+                    if a.active
+                }
+                sim.step(1.0)
+                metrics_engine.update(sim.get_state())
+                sim_time_accumulator -= 1.0
+                steps_taken += 1
         if network is not None:
             world_to_screen, screen_to_world = make_transform(
                 network,
@@ -794,8 +856,26 @@ def main():
 
         manager.draw_ui(screen)
         if sim is not None:
+            # Blend fraction: 0 right after a physics tick, approaching 1
+            # just before the next tick fires.
+            blend = min(sim_time_accumulator, 1.0)
+
             for agent in sim.get_agents():
-                ax, ay = world_to_screen(agent.x_m, agent.y_m)
+                current_x = agent.x_m
+                current_y = agent.y_m
+                # If we have a prior snapshot of this agent, interpolate from there.
+                # Otherwise render at current position (first frame after spawn).
+                prev = prev_agent_positions.get(agent.id)
+                if prev is not None:
+                    prev_x, prev_y, _prev_heading = prev
+                    interp_x = prev_x + (current_x - prev_x) * blend
+                    interp_y = prev_y + (current_y - prev_y) * blend
+                else:
+                    interp_x = current_x
+                    interp_y = current_y
+
+                ax, ay = world_to_screen(interp_x, interp_y)
+
                 if agent.agent_type == "bus":
                     color = (220, 80, 80)
                     radius = 7
