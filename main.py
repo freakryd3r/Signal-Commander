@@ -119,10 +119,14 @@ def draw_signal_head(screen, center_x, center_y, approach_angle_rad, phase_state
 def main():
     pygame.init()
     pygame.display.set_caption("Signal Lord")
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
+    info = pygame.display.Info()
+    screen = pygame.display.set_mode(
+        (info.current_w, info.current_h),
+        pygame.FULLSCREEN | pygame.NOFRAME,
+    )
     clock = pygame.time.Clock()
 
-    manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
+    manager = pygame_gui.UIManager((info.current_w, info.current_h))
 
     pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 10), (SIDEBAR_WIDTH - 20, 30)),
@@ -419,6 +423,8 @@ def main():
     selected_link = None
     current_mode = "none"
     sim_time_accumulator = 0.0
+    is_fullscreen = True
+    windowed_size = (WINDOW_WIDTH, WINDOW_HEIGHT)
     prev_agent_positions = {}
     # ===== Phase 10b: Bus Editor state =====
     bus_editor_expanded = False
@@ -539,6 +545,7 @@ def main():
 
             if event.type == pygame.VIDEORESIZE:
                 screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+                windowed_size = (event.w, event.h)  # remember size for fullscreen toggle
                 if hasattr(manager, 'set_window_resolution'):
                     manager.set_window_resolution((event.w, event.h))
 
@@ -604,15 +611,28 @@ def main():
                     else:
                         info_label.set_text("Click an intersection, link, or terminal")
                         clear_selection_ui()
-            
+
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    if bus_editor_mode in ("route", "stops"):
-                        bus_editor_mode = "none"
-                        # Discard drafts on ESC
-                        route_draft = []
-                        stops_draft = []
-                        bus_status_label.set_text("Edit mode canceled")
+                    if is_fullscreen:
+                        # Tear down and rebuild the display to clear NOFRAME flag
+                        pygame.display.quit()
+                        pygame.display.init()
+                        pygame.display.set_caption("Signal Lord")
+                        screen = pygame.display.set_mode(windowed_size, pygame.RESIZABLE)
+                        is_fullscreen = False
+                        if hasattr(manager, 'set_window_resolution'):
+                            manager.set_window_resolution(windowed_size)
+                    else:
+                        # Go fullscreen
+                        info = pygame.display.Info()
+                        screen = pygame.display.set_mode(
+                            (info.current_w, info.current_h),
+                            pygame.FULLSCREEN | pygame.NOFRAME,
+                        )
+                        is_fullscreen = True
+                        if hasattr(manager, 'set_window_resolution'):
+                            manager.set_window_resolution((info.current_w, info.current_h))
 
             if event.type == pygame_gui.UI_BUTTON_PRESSED:
                 if event.ui_element == create_network_button:
