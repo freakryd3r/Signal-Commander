@@ -717,8 +717,16 @@ def main():
                                 green_ns=green_ns,
                                 green_ew=green_ew,
                             )
-                            # Apply offset directly (update_signal doesn't support offset)
                             selected_intersection.offset = offset
+
+                            # Sync IntersectionState so simulation and metrics see the change
+                            if sim is not None:
+                                istate = sim.state.intersections.get(selected_intersection.id)
+                                if istate is not None:
+                                    istate.cycle_length_s = float(cycle)
+                                    istate.green_ns_s = float(green_ns)
+                                    istate.green_ew_s = float(green_ew)
+
                             load_intersection_fields(selected_intersection)
                             status_label.set_text("Intersection updated")
 
