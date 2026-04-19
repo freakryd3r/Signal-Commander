@@ -357,6 +357,7 @@ def websters_delay(
     q0_vph = float(intersection_state.last_cycle_flows[opp])
     q0_c_over_g = q0_vph * cycle_length_s / green_s
 
+    # Determine the left-turn equivalence factor
     if q0_c_over_g <= 0:
         # No opposing flow — use default eL for the opposing_lanes value
         if opposing_lanes == 1:
@@ -372,7 +373,8 @@ def websters_delay(
             opposing_lanes=opposing_lanes,
             q0_c_over_g=q0_c_over_g,
         )
-        equivalent_flow_vph = (
+
+    equivalent_flow_vph = (
         q_through
         + RIGHT_TURN_EQUIV * q_right
         + e_left * q_left

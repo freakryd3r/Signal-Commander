@@ -19,8 +19,13 @@ TERMINAL_NODE_IN_COLOR = (80, 170, 255)
 TERMINAL_NODE_OUT_COLOR = (255, 140, 140)
 SELECTED_COLOR = (255, 220, 80)
 SIDEBAR_TOP_OFFSET = 85  # pushes sidebar widgets below the SIGNAL LORD title
-SIDEBAR_LEFT = CANVAS_WIDTH - 175  # sidebar anchored 175px left of original CANVAS_WIDTH
+SIDEBAR_LEFT = 1400 - SIDEBAR_WIDTH # sidebar anchored 175px left of original CANVAS_WIDTH
 SIDEBAR_INPUT_X = SIDEBAR_LEFT + 130  # where input fields start
+SIDEBAR_CENTER = SIDEBAR_LEFT + SIDEBAR_WIDTH // 2  # vertical centerline x-coordinate
+
+def center_x(widget_width):
+    """Return x-coordinate to center a widget of given width on the sidebar centerline."""
+    return SIDEBAR_CENTER - widget_width // 2
 
 def get_world_bounds(network):
     all_nodes = network.get_all_nodes()
@@ -59,6 +64,10 @@ def safe_int(text, fallback):
         return int(text)
     except:
         return fallback
+    
+def center_x(widget_width):
+    """Return x-coordinate to center a widget on the sidebar centerline."""
+    return SIDEBAR_LEFT + SIDEBAR_WIDTH // 2 - widget_width // 2
 
 def draw_signal_head(screen, center_x, center_y, approach_angle_rad, phase_state):
     """
@@ -124,298 +133,268 @@ def main():
     info = pygame.display.Info()
     screen = pygame.display.set_mode(
         (info.current_w, info.current_h),
-        pygame.FULLSCREEN | pygame.NOFRAME,
+        pygame.FULLSCREEN | pygame.RESIZABLE,
     )
     clock = pygame.time.Clock()
 
     manager = pygame_gui.UIManager((info.current_w, info.current_h))
 
-    
-
+    # Setup title label (centered)
     setup_title_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT - 5, 50), (SIDEBAR_WIDTH - 5, 24)),
+        relative_rect=pygame.Rect((center_x(200), 50), (200, 24)),
         text="Create Network",
         manager=manager
     )
+
     network, sim = setup_am_peak()
     sim.pause()
     metrics_engine = MetricsEngine()
     heatmap_enabled = False
     pending_webster_recommendation = None
 
-    # Phase 8 Block D: metrics update throttling
-    # We recompute network + per-intersection metrics every 10 sim-seconds
-    # to avoid unnecessary work on every frame. Cached here between updates.
     METRICS_UPDATE_INTERVAL_S = 10.0
-    last_metrics_update_s = -1.0  # force immediate first update once time >= 0
+    last_metrics_update_s = -1.0
     cached_net_metrics = None
-    cached_intersection_metrics = {}  # keyed by intersection id
+    cached_intersection_metrics = {}
 
-
+    # Rows row (label + input, combined width 250, centered)
+    row_y = 85
     rows_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 85), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
         text="Rows",
         manager=manager
     )
     rows_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((CANVAS_WIDTH - 35, 85), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
         manager=manager
     )
     rows_input.set_text("3")
 
+    row_y = 120
     cols_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 120), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
         text="Columns",
         manager=manager
     )
     cols_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((SIDEBAR_INPUT_X, 120), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
         manager=manager
     )
     cols_input.set_text("3")
 
+    row_y = 155
     default_length_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 155), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
         text="Link Length",
         manager=manager
     )
     default_length_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((SIDEBAR_INPUT_X, 155), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
         manager=manager
     )
     default_length_input.set_text(str(DEFAULT_LINK_LENGTH_M))
 
     create_network_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 195), (160, 32)),
+        relative_rect=pygame.Rect((center_x(160), 195), (160, 32)),
         text="Create Network",
         manager=manager
     )
 
-    # Simulation control buttons
-    start_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 580), (80, 32)),
-        text="Start",
-        manager=manager
-    )
-
-    pause_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH - 75, 580), (80, 32)),
-        text="Pause",
-        manager=manager
-    )
-
-    reset_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT + 180, 580), (80, 32)),
-        text="Reset",
-        manager=manager
-    )
-
-    realtime_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 535), (70, 32)),
-        text="1x",
-        manager=manager
-    )
-    fast5_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH - 85, 535), (70, 32)),
-        text="5x",
-        manager=manager
-    )
-    fast20_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH - 5, 535), (70, 32)),
-        text="20x",
-        manager=manager
-    )
-    fast60_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 75, 535), (70, 32)),
-        text="60x",
-        manager=manager
-    )
-
-    sim_status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 620), (SIDEBAR_WIDTH - 20, 24)),
-        text="PAUSED  |  t = 0.0s / 3600s  |  Speed: 1x",
-        manager=manager
-    )
-
-    # ===== Phase 8 Block B: Metrics panel and action buttons =====
-
-    # Horizontal separator visual (a simple thin label)
-    pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 660), (SIDEBAR_WIDTH - 20, 24)),
-        text="— NETWORK METRICS —",
-        manager=manager
-    )
-
-    # Network metrics readout: 6 lines of key numbers
-    net_completed_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 690), (SIDEBAR_WIDTH - 20, 22)),
-        text="Completed trips: 0",
-        manager=manager
-    )
-
-    net_active_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 712), (SIDEBAR_WIDTH - 20, 22)),
-        text="Active vehicles: 0",
-        manager=manager
-    )
-
-    net_delay_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 734), (SIDEBAR_WIDTH - 20, 22)),
-        text="Mean delay: 0.0 s",
-        manager=manager
-    )
-
-    net_tt_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 756), (SIDEBAR_WIDTH - 20, 22)),
-        text="Mean travel time: 0.0 s",
-        manager=manager
-    )
-
-    net_p85_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 778), (SIDEBAR_WIDTH - 20, 22)),
-        text="85th %ile travel: 0.0 s",
-        manager=manager
-    )
-
-    net_denied_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 800), (SIDEBAR_WIDTH - 20, 22)),
-        text="Denied entries: 0",
-        manager=manager
-    )
-
-    # Action buttons row
-    webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 835), (170, 30)),
-        text="Webster Optimal",
-        manager=manager
-    )
-
-    apply_webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 835), (80, 30)),
-        text="Apply",
-        manager=manager
-    )
-    apply_webster_button.disable()  # disabled until a recommendation is computed
-
-    webster_result_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 870), (SIDEBAR_WIDTH - 20, 22)),
-        text="",
-        manager=manager
-    )
-
-    heatmap_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 905), (170, 30)),
-        text="Heatmap: OFF",
-        manager=manager
-    )
-
-    csv_export_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT + 175, 905), (80, 30)),
-        text="Export CSV",
-        manager=manager
-    )
-
-# ===== Phase 10b Block B1: Bus Editor toggle and panel =====
-    BUS_PANEL_Y = 945
-    BUS_PANEL_ROW_HEIGHT = 28
-
-    bus_toggle_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, BUS_PANEL_Y), (SIDEBAR_WIDTH - 20, 28)),
-        text="> Bus Editor",
-        manager=manager,
-    )
-
-    bus_editor_banner_rect = pygame.Rect(10, 10, CANVAS_WIDTH - 20, 36)
-
-    bus_editor_widgets = []
-
-    bus_section_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, BUS_PANEL_Y + 35), (SIDEBAR_WIDTH - 20, 22)),
-        text="— BUS LINES —",
-        manager=manager,
-    )
-    bus_editor_widgets.append(bus_section_label)
-
-    add_line_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, BUS_PANEL_Y + 60), (120, 28)),
-        text="+ Add Line",
-        manager=manager,
-    )
-    bus_editor_widgets.append(add_line_button)
-
-    bus_status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, BUS_PANEL_Y + 95), (SIDEBAR_WIDTH - 20, 22)),
-        text="",
-        manager=manager,
-    )
-    bus_editor_widgets.append(bus_status_label)
-
-    for widget in bus_editor_widgets:
-        widget.hide()
-
+    # Info + type labels (centered)
     info_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 245), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 235), (SIDEBAR_WIDTH -20, 24)),
         text="Click an intersection or link",
         manager=manager
     )
-
     object_type_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 280), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 265), (SIDEBAR_WIDTH - 20, 24)),
         text="Type: None",
         manager=manager
     )
 
+    # Fields (label + input rows, centered)
+    row_y = 295
     field1_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 330), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
         text="Field 1",
         manager=manager
     )
     field1_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((SIDEBAR_INPUT_X, 330), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
         manager=manager
     )
 
+    row_y = 330
     field2_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 370), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
         text="Field 2",
         manager=manager
     )
     field2_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((SIDEBAR_INPUT_X, 370), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
         manager=manager
     )
 
+    row_y = 365
     field3_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 410), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
         text="Field 3",
         manager=manager
     )
     field3_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((SIDEBAR_INPUT_X, 410), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
         manager=manager
     )
 
+    row_y = 400
     field4_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 440), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
         text="Field 4",
         manager=manager
     )
     field4_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((SIDEBAR_INPUT_X, 440), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
         manager=manager
     )
 
     apply_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 485), (120, 32)),
+        relative_rect=pygame.Rect((center_x(120), 440), (120, 32)),
         text="Apply",
         manager=manager
     )
 
     status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((SIDEBAR_LEFT, 525), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 525), (SIDEBAR_WIDTH - 20, 24)),
         text="",
         manager=manager
     )
+
+    # Speed buttons (1x / 5x / 20x / 60x) — 4 buttons in a row, centered
+    # Each 70px wide, 10px gap → total width 310
+    fast_row_total = 4 * 70 + 3 * 10  # 310
+    fast_row_left = center_x(fast_row_total)
+    row_y = 535
+    realtime_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((fast_row_left, row_y), (70, 32)),
+        text="1x",
+        manager=manager
+    )
+    fast5_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((fast_row_left + 80, row_y), (70, 32)),
+        text="5x",
+        manager=manager
+    )
+    fast20_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((fast_row_left + 160, row_y), (70, 32)),
+        text="20x",
+        manager=manager
+    )
+    fast60_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((fast_row_left + 240, row_y), (70, 32)),
+        text="60x",
+        manager=manager
+    )
+
+    # Sim control buttons (Start / Pause / Reset) — 3 buttons, centered
+    sim_row_total = 3 * 80 + 2 * 10  # 260
+    sim_row_left = center_x(sim_row_total)
+    row_y = 580
+    start_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((sim_row_left, row_y), (80, 32)),
+        text="Start",
+        manager=manager
+    )
+    pause_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((sim_row_left + 90, row_y), (80, 32)),
+        text="Pause",
+        manager=manager
+    )
+    reset_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((sim_row_left + 180, row_y), (80, 32)),
+        text="Reset",
+        manager=manager
+    )
+
+    sim_status_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH + 50), 620), (SIDEBAR_WIDTH + 50, 24)),
+        text="PAUSED | t = 0.0s / 3600s | Speed: 1x",
+        manager=manager
+    )
+
+    # Network metrics separator
+    pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 660), (SIDEBAR_WIDTH - 20, 24)),
+        text="— NETWORK METRICS —",
+        manager=manager
+    )
+
+    # Network metrics labels (centered)
+    net_completed_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 690), (SIDEBAR_WIDTH - 20, 22)),
+        text="Completed trips: 0",
+        manager=manager
+    )
+    net_active_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 712), (SIDEBAR_WIDTH - 20, 22)),
+        text="Active vehicles: 0",
+        manager=manager
+    )
+    net_delay_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 734), (SIDEBAR_WIDTH - 20, 22)),
+        text="Mean delay: 0.0 s",
+        manager=manager
+    )
+    net_tt_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 756), (SIDEBAR_WIDTH - 20, 22)),
+        text="Mean travel time: 0.0 s",
+        manager=manager
+    )
+    net_p85_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 778), (SIDEBAR_WIDTH - 20, 22)),
+        text="85th %ile travel: 0.0 s",
+        manager=manager
+    )
+    net_denied_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 800), (SIDEBAR_WIDTH - 20, 22)),
+        text="Denied entries: 0",
+        manager=manager
+    )
+
+    # Webster + Apply row (170 + 10 + 80 = 260 wide, centered)
+    webster_row_left = center_x(260)
+    row_y = 835
+    webster_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((webster_row_left, row_y), (170, 30)),
+        text="Webster Optimal",
+        manager=manager
+    )
+    apply_webster_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((webster_row_left + 180, row_y), (80, 30)),
+        text="Apply",
+        manager=manager
+    )
+    apply_webster_button.disable()
+
+    webster_result_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 870), (SIDEBAR_WIDTH - 20, 22)),
+        text="",
+        manager=manager
+    )
+
+    # Heatmap + CSV row (170 + 10 + 80 = 260 wide, centered)
+    heatmap_row_left = center_x(260)
+    row_y = 905
+    heatmap_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((heatmap_row_left, row_y), (170, 30)),
+        text="Heatmap: OFF",
+        manager=manager
+    )
+    csv_export_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((heatmap_row_left + 180, row_y), (80, 30)),
+        text="Export CSV",
+        manager=manager
+    )
+
 
     selected_intersection = None
     selected_link = None
@@ -424,13 +403,7 @@ def main():
     is_fullscreen = True
     windowed_size = (WINDOW_WIDTH, WINDOW_HEIGHT)
     prev_agent_positions = {}
-    # ===== Phase 10b: Bus Editor state =====
-    bus_editor_expanded = False
-    bus_editor_mode = "none"  # "none" | "route" | "stops"
-    selected_bus_line_id = None
-    # Working buffer used while editing a route or stops (before Save)
-    route_draft = []              # list of intersection IDs
-    stops_draft = []              # list of BusStop dicts for a line being edited
+
 
     def clear_fields():
         field1_input.set_text("")
@@ -784,22 +757,6 @@ def main():
                     except Exception as err:
                         status_label.set_text(f"Export failed: {err}")
 
-                if event.ui_element == bus_toggle_button:
-                    bus_editor_expanded = not bus_editor_expanded
-                    if bus_editor_expanded:
-                        bus_toggle_button.set_text("▼ Bus Editor")
-                        for widget in bus_editor_widgets:
-                            widget.show()
-                    else:
-                        bus_toggle_button.set_text("▶ Bus Editor")
-                        for widget in bus_editor_widgets:
-                            widget.hide()
-                        # Exit any active edit mode when collapsing
-                        bus_editor_mode = "none"
-                        selected_bus_line_id = None
-
-                if event.ui_element == add_line_button and sim is not None:
-                    bus_status_label.set_text("Add Line clicked (B2 in next step)")
 
                 if event.ui_element == apply_button and network is not None:
                     # Lockdown: disallow edits while simulation is running
@@ -1092,7 +1049,7 @@ def main():
         title_surface = title_font.render("SIGNAL LORD", True, (240, 200, 60))
 
         title_x = SIDEBAR_LEFT + (SIDEBAR_WIDTH - title_surface.get_width()) // 2
-        title_y = 10
+        title_y = 7
 
         screen.blit(shadow, (title_x + 2, title_y + 2))
         screen.blit(title_surface, (title_x, title_y))
@@ -1138,22 +1095,6 @@ def main():
                     color = (70, 130, 220)
                     radius = 5
                 pygame.draw.circle(screen, color, (ax, ay), radius)
-        
-        # Bus editor mode banner (shown when actively editing a route or stops)
-        if bus_editor_mode in ("route", "stops"):
-            banner_font = pygame.font.SysFont("Arial", 18, bold=True)
-            if bus_editor_mode == "route":
-                banner_text = f"EDITING ROUTE: {selected_bus_line_id}  —  click intersections in order, ESC to finish"
-            else:
-                banner_text = f"EDITING STOPS: {selected_bus_line_id}  —  click a link to add/remove stops, ESC to finish"
-
-            # Solid banner background
-            pygame.draw.rect(screen, (220, 150, 30), bus_editor_banner_rect)
-            pygame.draw.rect(screen, (120, 80, 10), bus_editor_banner_rect, 2)
-
-            banner_surface = banner_font.render(banner_text, True, (0, 0, 0))
-            banner_rect = banner_surface.get_rect(center=bus_editor_banner_rect.center)
-            screen.blit(banner_surface, banner_rect)
 
         # Simulation Complete overlay
         if sim is not None and sim.state.sim_completed:

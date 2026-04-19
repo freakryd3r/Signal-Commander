@@ -1,7 +1,7 @@
 # Window (defaults used in windowed mode only)
 WINDOW_WIDTH = 1400
 WINDOW_HEIGHT = 1000
-SIDEBAR_WIDTH = 350
+SIDEBAR_WIDTH = 400
 
 # These are fallback defaults — actual runtime values come from the live window
 CANVAS_WIDTH = WINDOW_WIDTH - SIDEBAR_WIDTH
