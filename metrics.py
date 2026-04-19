@@ -286,12 +286,49 @@ def compute_cid(intersection_state: Any, approach: str, current_time_s: float) -
 # =============================================================================
 # WEBSTER DELAY
 # =============================================================================
+def assumed_movement_split(total_flow_vph: float) -> Dict[str, float]:
+    """
+    Split total approach flow using fixed assumed percentages.
+
+    Assumptions
+    -----------
+    - through = 60%
+    - right = 20%
+    - left = 20%
+
+    Parameters
+    ----------
+    total_flow_vph : float
+        Total approach flow in veh/hr.
+
+    Returns
+    -------
+    dict
+        Through, right, and left flows in veh/hr.
+    """
+    if total_flow_vph < 0:
+        raise ValueError("total_flow_vph must be nonnegative.")
+
+    return {
+        "through_vph": 0.60 * total_flow_vph,
+        "right_vph": 0.20 * total_flow_vph,
+        "left_vph": 0.20 * total_flow_vph,
+    }
+def opposing_approach(approach: str) -> str:
+    """
+    Return the opposing approach label.
+    """
+    mapping = {"N": "S", "S": "N", "E": "W", "W": "E"}
+    if approach not in mapping:
+        raise ValueError(f"Invalid approach '{approach}'.")
+    return mapping[approach]
 
 def websters_delay(
     intersection_state: Any,
     approach: str,
     cycle_length_s: float,
     green_s: float,
+    opposing_lanes: int = 2,
 ) -> float:
     """
     Compute Webster average control delay estimate for one approach.
@@ -309,13 +346,47 @@ def websters_delay(
             "Webster metrics are unavailable until the first signal cycle completes."
         )
 
-    flow_vph = float(intersection_state.last_cycle_flows[approach])
+    total_flow_vph = float(intersection_state.last_cycle_flows[approach])
+    split = assumed_movement_split(total_flow_vph)
+
+    q_through = split["through_vph"]
+    q_right = split["right_vph"]
+    q_left = split["left_vph"]
+
+    opp = opposing_approach(approach)
+    q0_vph = float(intersection_state.last_cycle_flows[opp])
+
+    q0_c_over_g = q0_vph * cycle_length_s / green_s
+    e_left = lookup_unprotected_left_equivalence_factor(
+        opposing_lanes=opposing_lanes,
+        q0_c_over_g=q0_c_over_g,
+    )
+    if q0_c_over_g <= 0:
+        if opposing_lanes == 1:
+            e_left = 1.6
+        elif opposing_lanes == 2:
+            e_left = 2.0
+        elif opposing_lanes == 3:
+            e_left = 2.2
+        else:
+            raise ValueError(f"Unsupported opposing_lanes={opposing_lanes}.")
+    else:
+        e_left = lookup_unprotected_left_equivalence_factor(
+            opposing_lanes=opposing_lanes,
+            q0_c_over_g=q0_c_over_g,
+        )
+    equivalent_flow_vph = (
+        q_through
+        + RIGHT_TURN_EQUIV * q_right
+        + e_left * q_left
+    )
 
     capacity_vph = (green_s / cycle_length_s) * SAT_FLOW
     if capacity_vph <= 0:
         raise ValueError("Computed capacity_vph must be positive.")
 
-    x = flow_vph / capacity_vph
+    x = equivalent_flow_vph / capacity_vph
+
     g_over_c = green_s / cycle_length_s
 
     denominator = 1.0 - min(1.0, x) * g_over_c
@@ -738,11 +809,31 @@ class MetricsEngine:
 
         self.completed_trips.extend(sim_state.completed_trips_this_step)
         self.denied_entries += int(sim_state.denied_entries_this_step)
+
         if sim_state.warmup_complete:
             self.post_warmup_completed_trips.extend(sim_state.completed_trips_this_step)
             for trip in sim_state.completed_trips_this_step:
                 self.rolling_completed_trips.append((self.current_time_s, trip))
+
             per_intersection = self.get_intersection_metrics(sim_state)
+            for intersection_id, vals in per_intersection.items():
+                if intersection_id not in self.intersection_history:
+                    self.intersection_history[intersection_id] = {
+                        "delay_samples": [],
+                        "queue_samples": [],
+                        "throughput_samples": [],
+                    }
+
+                self.intersection_history[intersection_id]["delay_samples"].append(
+                    float(vals["mean_delay_sec_per_veh"])
+                )
+                self.intersection_history[intersection_id]["queue_samples"].append(
+                    float(vals["total_queue_veh"])
+                )
+                self.intersection_history[intersection_id]["throughput_samples"].append(
+                    float(vals["throughput_veh_hr"])
+                )
+
             mean_delays = [vals["mean_delay_sec_per_veh"] for vals in per_intersection.values()]
             sampled_delay = float(np.mean(mean_delays)) if mean_delays else 0.0
             self.rolling_network_delay_samples.append((self.current_time_s, sampled_delay))
@@ -774,7 +865,7 @@ class MetricsEngine:
         return float(np.mean([delay for _, delay in self.rolling_network_delay_samples]))
 
 
-    def get_network_metrics(self) -> Dict[str, float]:
+    def get_network_metrics(self) -> Dict[str, Any]:
         """
         Return network-level metrics excluding warm-up.
 
@@ -787,6 +878,9 @@ class MetricsEngine:
                 "total_completed_trips": 0.0,
                 "denied_entries": 0.0,
                 "total_vehicles_in_network": 0.0,
+                "total_queue_veh": 0.0,
+                "max_queue_veh": 0.0,
+                "max_queue_location": "",
                 "network_mean_delay_s": 0.0,
                 "mean_travel_time_s": 0.0,
                 "p85_travel_time_s": 0.0,
@@ -799,7 +893,26 @@ class MetricsEngine:
 
         total_completed_trips = float(len(self.latest_state.completed_trips))
         denied_entries_total = float(self.latest_state.denied_entries_total)
-        total_vehicles_in_network = float(sum(link.num_vehicles for link in self.latest_state.links.values()))
+        total_vehicles_in_network = float(
+            sum(link.num_vehicles for link in self.latest_state.links.values())
+        )
+
+        total_queue_veh = float(
+            sum(
+                sum(inter.queue_lengths.values())
+                for inter in self.latest_state.intersections.values()
+            )
+        )
+
+        max_queue_veh = 0
+        max_queue_location = ""
+
+        for intersection_id, inter in self.latest_state.intersections.items():
+            for approach, q in inter.queue_lengths.items():
+                if q > max_queue_veh:
+                    max_queue_veh = int(q)
+                    max_queue_location = f"{intersection_id}:{approach}"
+
         per_intersection = self.get_intersection_metrics(self.latest_state)
         mean_delays = [vals["mean_delay_sec_per_veh"] for vals in per_intersection.values()]
         network_mean_delay_s = float(np.mean(mean_delays)) if mean_delays else 0.0
@@ -809,6 +922,9 @@ class MetricsEngine:
                 "total_completed_trips": total_completed_trips,
                 "denied_entries": denied_entries_total,
                 "total_vehicles_in_network": total_vehicles_in_network,
+                "total_queue_veh": total_queue_veh,
+                "max_queue_veh": float(max_queue_veh),
+                "max_queue_location": max_queue_location,
                 "network_mean_delay_s": 0.0,
                 "mean_travel_time_s": 0.0,
                 "p85_travel_time_s": 0.0,
@@ -825,6 +941,9 @@ class MetricsEngine:
             "total_completed_trips": total_completed_trips,
             "denied_entries": denied_entries_total,
             "total_vehicles_in_network": total_vehicles_in_network,
+            "total_queue_veh": total_queue_veh,
+            "max_queue_veh": float(max_queue_veh),
+            "max_queue_location": max_queue_location,
             "network_mean_delay_s": network_mean_delay_s,
             "mean_travel_time_s": mean_travel_time(self.post_warmup_completed_trips),
             "p85_travel_time_s": percentile_travel_time(self.post_warmup_completed_trips, p=85.0),
@@ -834,6 +953,46 @@ class MetricsEngine:
             "rolling_network_mean_delay_s": self._rolling_network_mean_delay(),
             "warmup_excluded": 1.0,
         }
+    def get_final_intersection_summary(self) -> Dict[str, Dict[str, Any]]:
+            """
+            Return end-of-simulation summary metrics for each intersection.
+
+            Returns
+            -------
+            dict
+                Per-intersection summary statistics over the simulation run.
+            """
+            summary: Dict[str, Dict[str, Any]] = {}
+
+            for intersection_id, hist in self.intersection_history.items():
+                delay_samples = hist["delay_samples"]
+                queue_samples = hist["queue_samples"]
+                throughput_samples = hist["throughput_samples"]
+
+                avg_delay = float(np.mean(delay_samples)) if delay_samples else 0.0
+                max_delay = float(np.max(delay_samples)) if delay_samples else 0.0
+
+                avg_queue = float(np.mean(queue_samples)) if queue_samples else 0.0
+                max_queue = float(np.max(queue_samples)) if queue_samples else 0.0
+
+                avg_throughput = float(np.mean(throughput_samples)) if throughput_samples else 0.0
+                max_throughput = float(np.max(throughput_samples)) if throughput_samples else 0.0
+
+                los, los_color = level_of_service(avg_delay)
+
+                summary[intersection_id] = {
+                    "avg_delay_sec_per_veh": avg_delay,
+                    "max_delay_sec_per_veh": max_delay,
+                    "avg_queue_veh": avg_queue,
+                    "max_queue_veh": max_queue,
+                    "avg_throughput_veh_hr": avg_throughput,
+                    "max_throughput_veh_hr": max_throughput,
+                    "final_los": los,
+                    "final_los_color": los_color,
+                    "num_samples": len(delay_samples),
+                }
+
+            return summary
 
     def get_intersection_metrics(
         self,
@@ -872,7 +1031,7 @@ class MetricsEngine:
                     )
                     delays.append(delay_s)
                     approach_delays[approach] = delay_s
-                except Exception:
+                except ValueError:
                     approach_delays[approach] = None
 
             mean_delay_s = float(np.mean(delays)) if delays else 0.0
@@ -881,6 +1040,15 @@ class MetricsEngine:
             throughput_vph = float(sum(inter.last_cycle_flows.values()))
             capacity_vph = SAT_FLOW * ((green_ns_s / cycle_length_s) * 2 + (green_ew_s / cycle_length_s) * 2)
             vc_ratio = throughput_vph / capacity_vph if capacity_vph > 0 else 0.0
+            queue_by_approach = {
+                "N": int(inter.queue_lengths.get("N", 0)),
+                "S": int(inter.queue_lengths.get("S", 0)),
+                "E": int(inter.queue_lengths.get("E", 0)),
+                "W": int(inter.queue_lengths.get("W", 0)),
+            }
+            total_queue = sum(queue_by_approach.values())
+            max_queue_approach = max(queue_by_approach, key=queue_by_approach.get)
+            max_queue_value = queue_by_approach[max_queue_approach]
 
             results[intersection_id] = {
                 "mean_delay_sec_per_veh": mean_delay_s,
@@ -888,6 +1056,10 @@ class MetricsEngine:
                 "los_color": los_color,
                 "throughput_veh_hr": throughput_vph,
                 "vc_ratio": vc_ratio,
+                "queue_by_approach": queue_by_approach,
+                "total_queue_veh": total_queue,
+                "max_queue_approach": max_queue_approach,
+                "max_queue_veh": max_queue_value,
                 "approach_delay_sec_per_veh": approach_delays,
                 "used_placeholder_timing": used_placeholder_timing,
                 "cycle_length_s": cycle_length_s,
@@ -933,6 +1105,7 @@ class MetricsEngine:
         self.post_warmup_completed_trips: List[Dict[str, Any]] = []
         self.rolling_completed_trips: Deque[Tuple[float, Dict[str, Any]]] = deque()
         self.rolling_network_delay_samples: Deque[Tuple[float, float]] = deque()
+        self.intersection_history: Dict[str, Dict[str, List[float]]] = {}
 
     def reset_all(self) -> None:
         """
@@ -956,6 +1129,7 @@ class MetricsEngine:
             per_intersection_path=per_intersection_path,
             network_path=network_path,
             cycle_green_by_intersection=cycle_green_by_intersection,
+            engine=self,
         )
 
     def get_webster_recommendation_simple(
@@ -979,12 +1153,15 @@ def export_csv(
     per_intersection_path: str,
     network_path: str,
     cycle_green_by_intersection: Optional[Dict[str, Dict[str, float]]] = None,
+    engine: Optional[MetricsEngine] = None,
 ) -> None:
     """
     Write per-intersection and network-level CSV files.
     """
-    engine = MetricsEngine()
-    engine.update(sim_state)
+    if engine is None:
+        raise ValueError(
+            "export_csv() requires a live MetricsEngine instance for correct full-run metrics."
+        )
 
     per_intersection = engine.get_intersection_metrics(
         sim_state=sim_state,
@@ -1003,6 +1180,13 @@ def export_csv(
             "los",
             "throughput_veh_hr",
             "vc_ratio",
+            "total_queue_veh",
+            "max_queue_approach",
+            "max_queue_veh",
+            "queue_n",
+            "queue_s",
+            "queue_e",
+            "queue_w",
         ])
 
         for intersection_id, vals in per_intersection.items():
@@ -1015,6 +1199,13 @@ def export_csv(
                 vals["los"],
                 vals["throughput_veh_hr"],
                 vals["vc_ratio"],
+                vals["total_queue_veh"],
+                vals["max_queue_approach"],
+                vals["max_queue_veh"],
+                vals["queue_by_approach"]["N"],
+                vals["queue_by_approach"]["S"],
+                vals["queue_by_approach"]["E"],
+                vals["queue_by_approach"]["W"],
             ])
 
     with open(network_path, "w", newline="", encoding="utf-8") as f:
@@ -1023,6 +1214,9 @@ def export_csv(
             "total_completed_trips",
             "denied_entries",
             "total_vehicles_in_network",
+            "total_queue_veh",
+            "max_queue_veh",
+            "max_queue_location",
             "mean_travel_time_s",
             "p85_travel_time_s",
             "network_mean_delay_s",
@@ -1037,6 +1231,9 @@ def export_csv(
             network_metrics["total_completed_trips"],
             network_metrics["denied_entries"],
             network_metrics["total_vehicles_in_network"],
+            network_metrics["total_queue_veh"],
+            network_metrics["max_queue_veh"],
+            network_metrics["max_queue_location"],
             network_metrics["mean_travel_time_s"],
             network_metrics["p85_travel_time_s"],
             network_metrics["network_mean_delay_s"],
@@ -1045,5 +1242,6 @@ def export_csv(
             network_metrics["rolling_p85_travel_time_s"],
             network_metrics["rolling_network_mean_delay_s"],
             network_metrics["warmup_excluded"],
+    
         ])
         
