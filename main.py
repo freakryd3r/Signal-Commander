@@ -141,7 +141,7 @@ def main():
 
     # Setup title label (centered)
     setup_title_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(200), 50), (200, 24)),
+        relative_rect=pygame.Rect((center_x(60), 50), (160, 32)),
         text="Create Network",
         manager=manager
     )
@@ -160,54 +160,54 @@ def main():
     # Rows row (label + input, combined width 250, centered)
     row_y = 85
     rows_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
+        relative_rect=pygame.Rect((center_x(110), row_y), (120, 24)),
         text="Rows",
         manager=manager
     )
     rows_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
+        relative_rect=pygame.Rect((center_x(200) + 130, row_y), (120, 28)),
         manager=manager
     )
     rows_input.set_text("3")
 
     row_y = 120
     cols_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
+        relative_rect=pygame.Rect((center_x(130), row_y), (120, 24)),
         text="Columns",
         manager=manager
     )
     cols_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
+        relative_rect=pygame.Rect((center_x(200) + 130, row_y), (120, 28)),
         manager=manager
     )
     cols_input.set_text("3")
 
     row_y = 155
     default_length_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
+        relative_rect=pygame.Rect((center_x(150), row_y), (120, 24)),
         text="Link Length",
         manager=manager
     )
     default_length_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
+        relative_rect=pygame.Rect((center_x(200) + 130, row_y), (120, 28)),
         manager=manager
     )
     default_length_input.set_text(str(DEFAULT_LINK_LENGTH_M))
 
     create_network_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((center_x(160), 195), (160, 32)),
+        relative_rect=pygame.Rect((center_x(60), 195), (160, 32)),
         text="Create Network",
         manager=manager
     )
 
     # Info + type labels (centered)
     info_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 235), (SIDEBAR_WIDTH -20, 24)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH), 235), (SIDEBAR_WIDTH + 80, 24)),
         text="Click an intersection or link",
         manager=manager
     )
     object_type_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 265), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH), 265), (SIDEBAR_WIDTH +80, 24)),
         text="Type: None",
         manager=manager
     )
@@ -215,56 +215,56 @@ def main():
     # Fields (label + input rows, centered)
     row_y = 295
     field1_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (150, 24)),
         text="Field 1",
         manager=manager
     )
     field1_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (150, 28)),
         manager=manager
     )
 
     row_y = 330
     field2_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (150, 24)),
         text="Field 2",
         manager=manager
     )
     field2_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (150, 28)),
         manager=manager
     )
 
     row_y = 365
     field3_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (150, 24)),
         text="Field 3",
         manager=manager
     )
     field3_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (150, 28)),
         manager=manager
     )
 
     row_y = 400
     field4_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(250), row_y), (120, 24)),
+        relative_rect=pygame.Rect((center_x(250), row_y), (150, 24)),
         text="Field 4",
         manager=manager
     )
     field4_input = pygame_gui.elements.UITextEntryLine(
-        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (120, 28)),
+        relative_rect=pygame.Rect((center_x(250) + 130, row_y), (150, 28)),
         manager=manager
     )
 
     apply_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((center_x(120), 440), (120, 32)),
+        relative_rect=pygame.Rect((center_x(85), 440), (200, 32)),
         text="Apply",
         manager=manager
     )
 
     status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 525), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH), 480), (SIDEBAR_WIDTH + 80, 24)),
         text="",
         manager=manager
     )
@@ -273,24 +273,24 @@ def main():
     # Each 70px wide, 10px gap → total width 310
     fast_row_total = 4 * 70 + 3 * 10  # 310
     fast_row_left = center_x(fast_row_total)
-    row_y = 535
+    row_y = 515
     realtime_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((fast_row_left, row_y), (70, 32)),
+        relative_rect=pygame.Rect((fast_row_left +50, row_y), (70, 32)),
         text="1x",
         manager=manager
     )
     fast5_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((fast_row_left + 80, row_y), (70, 32)),
+        relative_rect=pygame.Rect((fast_row_left + 130, row_y), (70, 32)),
         text="5x",
         manager=manager
     )
     fast20_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((fast_row_left + 160, row_y), (70, 32)),
+        relative_rect=pygame.Rect((fast_row_left + 210, row_y), (70, 32)),
         text="20x",
         manager=manager
     )
     fast60_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((fast_row_left + 240, row_y), (70, 32)),
+        relative_rect=pygame.Rect((fast_row_left + 290, row_y), (70, 32)),
         text="60x",
         manager=manager
     )
@@ -298,78 +298,78 @@ def main():
     # Sim control buttons (Start / Pause / Reset) — 3 buttons, centered
     sim_row_total = 3 * 80 + 2 * 10  # 260
     sim_row_left = center_x(sim_row_total)
-    row_y = 580
+    row_y = 550
     start_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((sim_row_left, row_y), (80, 32)),
+        relative_rect=pygame.Rect((sim_row_left+ 50, row_y), (80, 32)),
         text="Start",
         manager=manager
     )
     pause_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((sim_row_left + 90, row_y), (80, 32)),
+        relative_rect=pygame.Rect((sim_row_left + 140, row_y), (80, 32)),
         text="Pause",
         manager=manager
     )
     reset_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((sim_row_left + 180, row_y), (80, 32)),
+        relative_rect=pygame.Rect((sim_row_left + 230, row_y), (80, 32)),
         text="Reset",
         manager=manager
     )
 
     sim_status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH + 50), 620), (SIDEBAR_WIDTH + 50, 24)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH + 50), 585), (SIDEBAR_WIDTH + 150, 24)),
         text="PAUSED | t = 0.0s / 3600s | Speed: 1x",
         manager=manager
     )
 
     # Network metrics separator
     pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 660), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 620), (SIDEBAR_WIDTH + 80, 24)),
         text="— NETWORK METRICS —",
         manager=manager
     )
 
     # Network metrics labels (centered)
     net_completed_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 690), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 642), (SIDEBAR_WIDTH + 80, 22)),
         text="Completed trips: 0",
         manager=manager
     )
     net_active_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 712), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 664), (SIDEBAR_WIDTH + 80, 22)),
         text="Active vehicles: 0",
         manager=manager
     )
     net_delay_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 734), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 686), (SIDEBAR_WIDTH + 80, 22)),
         text="Mean delay: 0.0 s",
         manager=manager
     )
     net_tt_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 756), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 708), (SIDEBAR_WIDTH + 80, 22)),
         text="Mean travel time: 0.0 s",
         manager=manager
     )
     net_p85_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 778), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 730), (SIDEBAR_WIDTH + 80, 22)),
         text="85th %ile travel: 0.0 s",
         manager=manager
     )
     net_denied_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 800), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 752), (SIDEBAR_WIDTH + 80, 22)),
         text="Denied entries: 0",
         manager=manager
     )
 
     # Webster + Apply row (170 + 10 + 80 = 260 wide, centered)
     webster_row_left = center_x(260)
-    row_y = 835
+    row_y = 777
     webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((webster_row_left, row_y), (170, 30)),
+        relative_rect=pygame.Rect((webster_row_left + 40, row_y), (170, 30)),
         text="Webster Optimal",
         manager=manager
     )
     apply_webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((webster_row_left + 180, row_y), (80, 30)),
+        relative_rect=pygame.Rect((webster_row_left + 220, row_y), (80, 30)),
         text="Apply",
         manager=manager
     )
@@ -383,14 +383,14 @@ def main():
 
     # Heatmap + CSV row (170 + 10 + 80 = 260 wide, centered)
     heatmap_row_left = center_x(260)
-    row_y = 905
+    row_y = 820
     heatmap_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((heatmap_row_left, row_y), (170, 30)),
+        relative_rect=pygame.Rect((heatmap_row_left + 40, row_y), (170, 30)),
         text="Heatmap: OFF",
         manager=manager
     )
     csv_export_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((heatmap_row_left + 180, row_y), (80, 30)),
+        relative_rect=pygame.Rect((heatmap_row_left + 220, row_y), (80, 30)),
         text="Export CSV",
         manager=manager
     )
