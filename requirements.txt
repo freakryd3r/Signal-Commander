@@ -1,4 +1,11 @@
 # Requires Python 3.12 (pygame-ce does not support 3.13+)
+# Run this
+# cd "C:\Users\Evan\Downloads\Signal Commander"
+# py -3.12 -m venv venv
+# venv\Scripts\activate
+# python -m pip install --upgrade pip
+# pip install -r requirements.txt
+# python main.py
 pygame-ce==2.5.2
 pygame_gui==0.6.12
 networkx==3.3
