@@ -360,27 +360,6 @@ def main():
         manager=manager
     )
 
-    # Webster + Apply row (170 + 10 + 80 = 260 wide, centered)
-    webster_row_left = center_x(260)
-    row_y = 777
-    webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((webster_row_left + 40, row_y), (170, 30)),
-        text="Webster Optimal",
-        manager=manager
-    )
-    apply_webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((webster_row_left + 220, row_y), (80, 30)),
-        text="Apply",
-        manager=manager
-    )
-    apply_webster_button.disable()
-
-    webster_result_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 870), (SIDEBAR_WIDTH - 20, 22)),
-        text="",
-        manager=manager
-    )
-
     # Heatmap + CSV row (170 + 10 + 80 = 260 wide, centered)
     heatmap_row_left = center_x(260)
     row_y = 820
@@ -672,66 +651,6 @@ def main():
                 if event.ui_element == fast60_button and sim is not None:
                     sim.set_speed(60)
                     status_label.set_text("Speed: 60x")
-                
-                # ===== Phase 8 Block C: action button handlers =====
-
-
-                if event.ui_element == webster_button and sim is not None:
-                    if sim.state.sim_running:
-                        webster_result_label.set_text("Pause or reset to use Webster")
-                    elif current_mode != "intersection" or selected_intersection is None:
-                        webster_result_label.set_text(
-                            "Select an intersection first"
-                        )
-                    else:
-                        istate = sim.state.intersections[selected_intersection.id]
-                        try:
-                            rec = websters_optimal_cycle_simple(
-                                istate,
-                                yellow_s=3.0,
-                                all_red_s=2.0,
-                            )
-                            pending_webster_recommendation = {
-                                "intersection_id": selected_intersection.id,
-                                "cycle_length_s": rec["optimal_cycle_s"],
-                                "green_ns_s": rec["green_ns_s"],
-                                "green_ew_s": rec["green_ew_s"],
-                                "was_clamped": rec["was_y_clamped"],
-                            }
-                            clamp_note = " [Y CLAMPED]" if rec["was_y_clamped"] else ""
-                            webster_result_label.set_text(
-                                f"C={rec['optimal_cycle_s']:.0f}s "
-                                f"NS={rec['green_ns_s']:.0f} "
-                                f"EW={rec['green_ew_s']:.0f}"
-                                f"{clamp_note}"
-                            )
-                            apply_webster_button.enable()
-                        except ValueError as err:
-                            webster_result_label.set_text(f"Error: {err}")
-                            pending_webster_recommendation = None
-                            apply_webster_button.disable()
-
-                if event.ui_element == apply_webster_button and sim is not None:
-                    if sim.state.sim_running:
-                        webster_result_label.set_text("Pause or reset to apply Webster")
-                    elif pending_webster_recommendation is None:
-                        webster_result_label.set_text("No recommendation pending")
-                    else:
-                        iid = pending_webster_recommendation["intersection_id"]
-                        istate = sim.state.intersections.get(iid)
-                        if istate is None:
-                            webster_result_label.set_text("Intersection not found")
-                        else:
-                            # Queue the timing change at next NS_GREEN boundary.
-                            # simulation.py applies pending_* fields on cycle entry.
-                            istate.pending_cycle_length_s = pending_webster_recommendation["cycle_length_s"]
-                            istate.pending_green_ns_s = pending_webster_recommendation["green_ns_s"]
-                            istate.pending_green_ew_s = pending_webster_recommendation["green_ew_s"]
-                            webster_result_label.set_text(
-                                f"Applied to {iid} at next cycle"
-                            )
-                            pending_webster_recommendation = None
-                            apply_webster_button.disable()
 
                 if event.ui_element == heatmap_button:
                     heatmap_enabled = not heatmap_enabled

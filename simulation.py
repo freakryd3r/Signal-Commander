@@ -76,8 +76,6 @@ STOPPED_SPEED_THRESHOLD_MS = 0.5
 DRIVER_REACTION_TIME_S = 1.0
 QUEUE_DETECTION_ZONE_M = 50.0
 SIM_DURATION_S = 3600.0 
-DEFAULT_BUS_DWELL_S = 20.0
-BUS_STOP_TRIGGER_DISTANCE_M = 1.0
 VIRTUAL_QUEUE_CAP = 50
 SOURCE_ENTRY_MIN_GAP_M = 15.0
 
@@ -186,39 +184,6 @@ class IntersectionState:
     )
 
 @dataclass
-class BusStop:
-    """
-    A bus stop on a specific link in a specific direction.
-
-    link_id: the Link.id the stop is on
-    fraction: 0.0..1.0 position along the link from from_int toward to_int
-    dwell_s: how long the bus waits at the stop
-    """
-    link_id: str
-    fraction: float
-    dwell_s: float = DEFAULT_BUS_DWELL_S
-
-
-@dataclass
-class BusLine:
-    """
-    A bus line defined by a sequence of intersection IDs and a set of stops.
-
-    intersection_ids: ordered list of intersection IDs the bus passes through.
-                      Consecutive IDs must be connected by a link.
-    close_loop: if True, after reaching the last intersection the bus returns
-                to the first (via shortest path through the network).
-    stops: list of BusStop on this route.
-    headway_s: seconds between consecutive buses on this line.
-    line_id: human-readable identifier.
-    """
-    line_id: str
-    intersection_ids: List[str]
-    close_loop: bool = True
-    stops: List[BusStop] = field(default_factory=list)
-    headway_s: float = 120.0
-
-@dataclass
 class SimulationState:
     """Top-level simulation state. Returned by sim.get_state()."""
     time_s: float = 0.0
@@ -289,10 +254,6 @@ class Agent:
         self.was_stopped = False
         self.free_to_move_at_s = None
 
-        self.bus_line_id = None
-        self.bus_stops_remaining = [] 
-        self.dwell_remaining_s = 0.0  
-
     @property
     def length_m(self):
         """Physical vehicle length for car-following (Phase 3)."""
@@ -358,25 +319,6 @@ class Agent:
             f"link={self.current_link_idx}/{len(self.route)}, "
             f"pos={self.position_on_link_m:.1f}m, active={self.active})"
         )
-
-class Bus(Agent):
-    """
-    A bus: subclass of Agent that dwells at designated stops.
-
-    Buses block their lane while dwelling; car-following then naturally
-    causes cars behind to queue.
-    """
-
-    def __init__(self, agent_id, route, spawn_time_s, bus_line):
-        super().__init__(
-            agent_id=agent_id,
-            agent_type="bus",
-            route=route,
-            spawn_time_s=spawn_time_s,
-        )
-        self.bus_line_id = bus_line.line_id
-        # Copy the stops list so each bus has its own "remaining" counter
-        self.bus_stops_remaining = list(bus_line.stops)
 
 # =================================================================
 # SIGNAL (Phase 2 stub; Phase 4 implements state machine)
@@ -600,9 +542,6 @@ class Simulation:
             if network.is_perimeter(inter.id):
                 self._virtual_queue[inter.id] = 0
 
-        self.bus_lines: Dict[str, BusLine] = {}
-        self._bus_spawn_schedule: List[tuple] = []
-
         # Cache reachable origin→destination pairs so we don't compute
         # shortest paths for impossible pairs every tick.
         self._valid_od_pairs = None  # populated on first use
@@ -818,165 +757,6 @@ class Simulation:
         idx = int(self.rng.integers(0, len(sides)))
         return sides[idx]
 
-    # ----------------- Bus line management (Phase 10a) -----------------
-
-    def add_bus_line(self, bus_line):
-        """
-        Register a bus line. Schedules the first bus to spawn at t=0
-        and subsequent buses on the line's headway.
-        """
-        self.bus_lines[bus_line.line_id] = bus_line
-        # Schedule first spawn at current sim time; subsequent buses
-        # at current_time + headway, + 2*headway, etc. We only store the
-        # next one here; after a spawn, _maybe_spawn_buses reschedules.
-        self._bus_spawn_schedule.append((self.state.time_s, bus_line))
-        self._bus_spawn_schedule.sort(key=lambda t: t[0])
-
-    def remove_bus_line(self, line_id):
-        """Remove a bus line; any currently-active buses keep going to finish their route."""
-        self.bus_lines.pop(line_id, None)
-        self._bus_spawn_schedule = [
-            (t, bl) for t, bl in self._bus_spawn_schedule if bl.line_id != line_id
-        ]
-
-    def _build_bus_route(self, bus_line):
-        """
-        Build a route for one bus on this line.
-
-        Route structure:
-            [inbound_terminal_link] +
-            [interior_links traversing intersection_ids in order, looping back
-             if close_loop] +
-            [outbound_terminal_link]
-
-        The inbound terminal attaches to intersection_ids[0].
-        The outbound terminal attaches to intersection_ids[-1] (or
-        intersection_ids[0] again if close_loop=True).
-        Both perimeter intersections must be on the grid perimeter.
-
-        Returns [] if any segment can't be routed or the endpoints aren't perimeter.
-        """
-        if len(bus_line.intersection_ids) < 2:
-            return []
-
-        first_id = bus_line.intersection_ids[0]
-        last_id = bus_line.intersection_ids[-1] if not bus_line.close_loop else first_id
-
-        # Bus entry and exit require perimeter intersections.
-        if not self.network.is_perimeter(first_id):
-            return []
-        if not self.network.is_perimeter(last_id):
-            return []
-
-        # Pick terminal sides — random if multiple options available
-        in_side = self._pick_random_terminal_side(first_id, "in")
-        out_side = self._pick_random_terminal_side(last_id, "out")
-        if in_side is None or out_side is None:
-            return []
-
-        inbound = self.network.get_terminal_link(first_id, in_side, "in")
-        outbound = self.network.get_terminal_link(last_id, out_side, "out")
-        if inbound is None or outbound is None:
-            return []
-
-        # Build interior traversal
-        nodes = list(bus_line.intersection_ids)
-        if bus_line.close_loop:
-            nodes = nodes + [nodes[0]]
-
-        interior = []
-        for i in range(len(nodes) - 1):
-            a_id = nodes[i]
-            b_id = nodes[i + 1]
-            segment = self.network.shortest_path(a_id, b_id, self.rng)
-            if not segment:
-                return []
-            interior.extend(segment)
-
-        return [inbound] + interior + [outbound]
-
-    def _spawn_bus(self, bus_line):
-        """Spawn one bus on this line. Returns True on success."""
-        route = self._build_bus_route(bus_line)
-        if not route:
-            return False
-        bus = Bus(
-            agent_id=self._next_agent_id,
-            route=route,
-            spawn_time_s=self.state.time_s,
-            bus_line=bus_line,
-        )
-        self._next_agent_id += 1
-        self.agents.append(bus)
-        return True
-
-    def _maybe_spawn_buses(self):
-        """
-        Each tick, check the bus spawn schedule. If any entry has
-        (next_time <= current_time), spawn a bus and reschedule the next
-        arrival at current_time + headway.
-        """
-        i = 0
-        while i < len(self._bus_spawn_schedule):
-            next_time, bus_line = self._bus_spawn_schedule[i]
-            if next_time > self.state.time_s:
-                break  # schedule is sorted; all later entries are in future
-
-            # Only spawn if bus line still registered
-            if bus_line.line_id in self.bus_lines:
-                self._spawn_bus(bus_line)
-                # Reschedule next bus on this line
-                self._bus_spawn_schedule[i] = (
-                    self.state.time_s + bus_line.headway_s,
-                    bus_line,
-                )
-            else:
-                self._bus_spawn_schedule.pop(i)
-                continue
-            i += 1
-
-        self._bus_spawn_schedule.sort(key=lambda t: t[0])
-
-    def _update_bus_dwell(self, bus, dt):
-        """
-        Bus-only logic: if currently dwelling, decrement timer and return
-        True (bus should not move). If at a scheduled stop, initiate dwell
-        and return True. Otherwise return False (normal movement).
-        """
-        if bus.dwell_remaining_s > 0:
-            bus.dwell_remaining_s -= dt
-            if bus.dwell_remaining_s < 0:
-                bus.dwell_remaining_s = 0
-            return bus.dwell_remaining_s > 0
-
-        # Check if we've reached the next scheduled stop on this route
-        current = bus.current_link()
-        if current is None:
-            return False
-        if not bus.bus_stops_remaining:
-            return False
-
-        # Only consider stops on the link we're currently on
-        next_stop = None
-        for stop in bus.bus_stops_remaining:
-            if stop.link_id == current.id:
-                next_stop = stop
-                break
-        if next_stop is None:
-            return False
-
-        # Where along the link does this stop sit?
-        stop_pos_m = next_stop.fraction * current.length_m
-        if bus.position_on_link_m >= stop_pos_m - BUS_STOP_TRIGGER_DISTANCE_M:
-            # Arrived: snap position to the stop, start dwell
-            bus.position_on_link_m = stop_pos_m
-            bus.dwell_remaining_s = next_stop.dwell_s
-            bus.bus_stops_remaining.remove(next_stop)
-            bus._update_world_position()
-            return True
-
-        return False
-
     def _drain_virtual_queues(self):
         """
         Each tick, try to physically spawn one pending agent per source
@@ -1114,9 +894,6 @@ class Simulation:
         # 2c. Attempt to drain any virtual queues that are pending
         self._drain_virtual_queues()
 
-        # 2d. Spawn buses whose headway has come
-        self._maybe_spawn_buses()
-
         # 3. Step signals; mirror their state into IntersectionState for metrics.py
         for sig in self.signals.values():
             istate = self.state.intersections[sig.intersection.id]
@@ -1132,16 +909,6 @@ class Simulation:
         for agent in self.agents:
             if not agent.active:
                 continue
-
-            # (pre) bus dwell check — if bus is dwelling or hit a stop, force speed=0
-            if isinstance(agent, Bus):
-                if self._update_bus_dwell(agent, dt):
-                    agent.speed_ms = 0.0
-                    # Also reset stop-tracking so reaction time doesn't kick in
-                    # when dwell ends (bus isn't "stopped at red", it's dwelling)
-                    agent.was_stopped = False
-                    agent.free_to_move_at_s = None
-                    continue  # skip rest of this agent's speed logic
 
             # (a) car-following constraint
             _leader, gap_m = self._find_leader(agent)

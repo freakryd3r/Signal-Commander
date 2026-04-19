@@ -105,42 +105,6 @@ def setup_am_peak():
     sim.set_od_matrix(od)
     sim.set_demand_scale(1.0)
 
-    # === Phase 10a: hardcoded bus lines ===
-    from simulation import BusLine, BusStop
-
-    # Line 1: middle-row east-west corridor
-    line1 = BusLine(
-        line_id="L1-EastWestCorridor",
-        intersection_ids=["I_1_0", "I_1_1", "I_1_2"],
-        close_loop=True,
-        headway_s=90.0,
-        stops=[
-            # Stop midway on the link between I_1_0 and I_1_1 going east
-            BusStop(link_id="L_I_1_0_to_I_1_1", fraction=0.5),
-            # Stop midway on the link between I_1_1 and I_1_2 going east
-            BusStop(link_id="L_I_1_1_to_I_1_2", fraction=0.5),
-            # Return trip stops
-            BusStop(link_id="L_I_1_2_to_I_1_1", fraction=0.5),
-            BusStop(link_id="L_I_1_1_to_I_1_0", fraction=0.5),
-        ],
-    )
-    sim.add_bus_line(line1)
-
-    # Line 2: perimeter loop (clockwise)
-    line2 = BusLine(
-        line_id="L2-PerimeterLoop",
-        intersection_ids=["I_0_0", "I_0_1", "I_0_2", "I_1_2", "I_2_2", "I_2_1", "I_2_0", "I_1_0"],
-        close_loop=True,
-        headway_s=180.0,
-        stops=[
-            BusStop(link_id="L_I_0_0_to_I_0_1", fraction=0.5),
-            BusStop(link_id="L_I_0_2_to_I_1_2", fraction=0.5),
-            BusStop(link_id="L_I_2_2_to_I_2_1", fraction=0.5),
-            BusStop(link_id="L_I_2_0_to_I_1_0", fraction=0.5),
-        ],
-    )
-    sim.add_bus_line(line2)
-
     return network, sim
 
     return network, sim
