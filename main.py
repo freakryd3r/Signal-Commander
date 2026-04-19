@@ -393,14 +393,24 @@ def main():
         manager=manager
     )
 
+    field4_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 440), (120, 24)),
+        text="Field 4",
+        manager=manager
+    )
+    field4_input = pygame_gui.elements.UITextEntryLine(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 140, 440), (120, 28)),
+        manager=manager
+    )
+
     apply_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 460), (120, 32)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 485), (120, 32)),
         text="Apply",
         manager=manager
     )
 
     status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 500), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 525), (SIDEBAR_WIDTH - 20, 24)),
         text="",
         manager=manager
     )
@@ -422,6 +432,7 @@ def main():
         field1_input.set_text("")
         field2_input.set_text("")
         field3_input.set_text("")
+        field4_input.set_text("")
 
     def load_intersection_fields(inter):
         nonlocal current_mode
@@ -432,13 +443,17 @@ def main():
         field1_label.set_text("Cycle")
         field2_label.set_text("Green NS")
         field3_label.set_text("Green EW")
+        field4_label.set_text("Offset")
 
         field1_input.set_text(str(inter.cycle_length))
         field2_input.set_text(str(inter.green_ns))
         field3_input.set_text(str(inter.green_ew))
+        field4_input.set_text(str(inter.offset))
 
         field3_label.show()
         field3_input.show()
+        field4_label.show()
+        field4_input.show()
 
         status_label.set_text("")
 
@@ -451,13 +466,17 @@ def main():
         field1_label.set_text("Length")
         field2_label.set_text("Lanes")
         field3_label.set_text("")
+        field4_label.set_text("")
 
         field1_input.set_text(str(int(link.length_m)))
         field2_input.set_text(str(link.lanes))
         field3_input.set_text("")
+        field4_input.set_text("")
 
         field3_label.hide()
         field3_input.hide()
+        field4_label.hide()
+        field4_input.hide()
 
         status_label.set_text("")
 
@@ -469,9 +488,12 @@ def main():
         field1_label.set_text("Field 1")
         field2_label.set_text("Field 2")
         field3_label.set_text("Field 3")
+        field4_label.set_text("Field 4")
 
         field3_label.show()
         field3_input.show()
+        field4_label.show()
+        field4_input.show()
 
         clear_fields()
         status_label.set_text("")
@@ -630,8 +652,45 @@ def main():
                             pending_webster_recommendation = None
                             apply_webster_button.disable()
 
+                if event.ui_element == webster_button and sim is not None:
+                    if sim.state.sim_running:
+                        webster_result_label.set_text("Pause or reset to use Webster")
+                    elif current_mode != "intersection" or selected_intersection is None:
+                        webster_result_label.set_text(
+                            "Select an intersection first"
+                        )
+                    else:
+                        istate = sim.state.intersections[selected_intersection.id]
+                        try:
+                            rec = websters_optimal_cycle_simple(
+                                istate,
+                                yellow_s=3.0,
+                                all_red_s=2.0,
+                            )
+                            pending_webster_recommendation = {
+                                "intersection_id": selected_intersection.id,
+                                "cycle_length_s": rec["optimal_cycle_s"],
+                                "green_ns_s": rec["green_ns_s"],
+                                "green_ew_s": rec["green_ew_s"],
+                                "was_clamped": rec["was_y_clamped"],
+                            }
+                            clamp_note = " [Y CLAMPED]" if rec["was_y_clamped"] else ""
+                            webster_result_label.set_text(
+                                f"C={rec['optimal_cycle_s']:.0f}s "
+                                f"NS={rec['green_ns_s']:.0f} "
+                                f"EW={rec['green_ew_s']:.0f}"
+                                f"{clamp_note}"
+                            )
+                            apply_webster_button.enable()
+                        except ValueError as err:
+                            webster_result_label.set_text(f"Error: {err}")
+                            pending_webster_recommendation = None
+                            apply_webster_button.disable()
+
                 if event.ui_element == apply_webster_button and sim is not None:
-                    if pending_webster_recommendation is None:
+                    if sim.state.sim_running:
+                        webster_result_label.set_text("Pause or reset to apply Webster")
+                    elif pending_webster_recommendation is None:
                         webster_result_label.set_text("No recommendation pending")
                     else:
                         iid = pending_webster_recommendation["intersection_id"]
@@ -692,10 +751,14 @@ def main():
                     bus_status_label.set_text("Add Line clicked (B2 in next step)")
 
                 if event.ui_element == apply_button and network is not None:
-                    if current_mode == "intersection" and selected_intersection is not None:
+                    # Lockdown: disallow edits while simulation is running
+                    if sim is not None and sim.state.sim_running:
+                        status_label.set_text("Pause or reset to edit")
+                    elif current_mode == "intersection" and selected_intersection is not None:
                         cycle = safe_int(field1_input.get_text(), selected_intersection.cycle_length)
                         green_ns = safe_int(field2_input.get_text(), selected_intersection.green_ns)
                         green_ew = safe_int(field3_input.get_text(), selected_intersection.green_ew)
+                        offset = safe_int(field4_input.get_text(), selected_intersection.offset)
 
                         if cycle <= 0:
                             status_label.set_text("Cycle must be > 0")
@@ -703,15 +766,33 @@ def main():
                             status_label.set_text("Green times must be >= 0")
                         elif green_ns + green_ew > cycle:
                             status_label.set_text("Green NS + Green EW > cycle")
+                        elif offset < 0 or offset >= cycle:
+                            status_label.set_text(f"Offset must be 0 to {cycle - 1}")
                         else:
                             network.update_signal(
                                 selected_intersection.id,
                                 cycle=cycle,
                                 green_ns=green_ns,
-                                green_ew=green_ew
+                                green_ew=green_ew,
                             )
+                            # Apply offset directly (update_signal doesn't support offset)
+                            selected_intersection.offset = offset
                             load_intersection_fields(selected_intersection)
                             status_label.set_text("Intersection updated")
+
+                    elif current_mode == "link" and selected_link is not None:
+                        length_m = safe_int(field1_input.get_text(), int(selected_link.length_m))
+                        lanes = safe_int(field2_input.get_text(), selected_link.lanes)
+
+                        if length_m <= 0:
+                            status_label.set_text("Length must be > 0")
+                        elif lanes <= 0:
+                            status_label.set_text("Lanes must be > 0")
+                        else:
+                            network.update_link_length(selected_link.id, length_m)
+                            network.update_lanes(selected_link.id, lanes)
+                            load_link_fields(selected_link)
+                            status_label.set_text("Link updated")
 
                     elif current_mode == "link" and selected_link is not None:
                         length_m = safe_int(field1_input.get_text(), int(selected_link.length_m))
