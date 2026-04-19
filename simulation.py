@@ -399,10 +399,15 @@ class Signal:
 
     def __init__(self, intersection):
         self.intersection = intersection
-        self.phase_idx = 0  # index into PHASE_SEQUENCE
+        # Offset delays this signal's first phase by `intersection.offset` seconds
+        # relative to sim start. Before offset elapses, signal is in "pre-start"
+        # (effectively all-red with time accumulating toward the offset).
+        self.phase_idx = 0
         self.current_phase = PHASE_SEQUENCE[0]
         self.time_in_phase_s = 0.0
         self.cycle_start_time_s = 0.0
+        # Pre-start state: before first phase begins at t = intersection.offset.
+        self.waiting_for_offset = True
 
     def _phase_duration(self):
         """Duration of the current phase in seconds, based on intersection timing."""
@@ -465,9 +470,30 @@ class Signal:
         """
         Advance the signal state machine by dt seconds.
 
-        On NS_GREEN entry, apply pending timing changes and stamp the new
-        cycle start time. On every other phase transition, just move on.
+        If still within the pre-start offset period, accumulate time and
+        show all-red until offset elapses. Then start the normal cycle.
         """
+        # Pre-start gate: hold at all-red until offset is reached
+        if self.waiting_for_offset:
+            self.time_in_phase_s += dt
+            if self.time_in_phase_s >= self.intersection.offset:
+                # Offset elapsed — enter first phase (NS_GREEN) and reset
+                self.waiting_for_offset = False
+                self.phase_idx = 0
+                self.current_phase = PHASE_SEQUENCE[0]
+                self.time_in_phase_s = 0.0
+                self.cycle_start_time_s = sim_time_s
+                # Mirror to state
+                istate.current_phase = self.current_phase
+                istate.time_in_phase_s = 0.0
+                istate.cycle_start_time_s = self.cycle_start_time_s
+            else:
+                # Display as all-red during pre-start (so metrics.py sees a
+                # red-like state; agents don't discharge through it)
+                istate.current_phase = "ALL_RED_1"
+                istate.time_in_phase_s = self.time_in_phase_s
+            return
+
         self.time_in_phase_s += dt
 
         duration = self._phase_duration()
@@ -479,19 +505,14 @@ class Signal:
         self.current_phase = PHASE_SEQUENCE[self.phase_idx]
         self.time_in_phase_s = 0.0
 
-        # Entering NS_GREEN means a new cycle has begun.
-        # Snapshot the just-completed cycle's flows BEFORE resetting
-        # cycle_start_time_s, then stamp the new cycle start.
         if self.current_phase == "NS_GREEN":
             self._snapshot_cycle_flows(istate, sim_time_s)
             self.cycle_start_time_s = sim_time_s
             self._apply_pending_timing(istate, sim_time_s)
 
     def is_green_for(self, approach):
-        """
-        Given approach in {"N","S","E","W"}, return True if that approach
-        has a green light right now.
-        """
+        if self.waiting_for_offset:
+            return False
         phase = self.current_phase
         if phase == "NS_GREEN":
             return approach in ("N", "S")
@@ -500,6 +521,8 @@ class Signal:
         return False
 
     def is_yellow_for(self, approach):
+        if self.waiting_for_offset:
+            return False
         phase = self.current_phase
         if phase == "NS_YELLOW":
             return approach in ("N", "S")
@@ -612,11 +635,13 @@ class Simulation:
 
         self.rng = np.random.default_rng(self.seed)
 
-        # Reset signals
+        # Reset signals — each goes back to pre-start, honoring its offset
         for sig in self.signals.values():
             sig.current_phase = "NS_GREEN"
             sig.time_in_phase_s = 0.0
             sig.cycle_start_time_s = 0.0
+            sig.waiting_for_offset = True
+            sig.phase_idx = 0
 
         # Reset intersection state
         for istate in self.state.intersections.values():
@@ -1002,17 +1027,46 @@ class Simulation:
         per tick with probability = rate_per_s × dt × demand_scale. If it
         fires, try to spawn.
         """
-        if not self.od_matrix or self.demand_scale == 0.0:
+        if self.demand_scale == 0.0:
             return
 
-        for origin_id, dests in self.od_matrix.items():
-            for dest_id, rate_vph in dests.items():
-                rate_per_s = rate_vph / 3600.0
-                p = rate_per_s * dt * self.demand_scale
-                # Cap probability at 1.0 to be safe against overlong dt
-                p = min(p, 1.0)
-                if self.rng.random() < p:
-                    self._try_spawn_od(origin_id, dest_id)
+        # Collect inbound terminal links with positive inflow
+        active_terminals = [
+            lnk for lnk in self.network.terminal_links
+            if lnk.in_or_out == "in" and lnk.inflow_vph > 0
+        ]
+
+        # If user hasn't set any inflows, fall back to OD matrix
+        if not active_terminals:
+            if not self.od_matrix:
+                return
+            for origin_id, dests in self.od_matrix.items():
+                for dest_id, rate_vph in dests.items():
+                    rate_per_s = rate_vph / 3600.0
+                    p = rate_per_s * dt * self.demand_scale
+                    p = min(p, 1.0)
+                    if self.rng.random() < p:
+                        self._try_spawn_od(origin_id, dest_id)
+            return
+
+        # Per-terminal Poisson spawning with uniform destination selection
+        perimeter_ids = [
+            inter.id for inter in self.network.intersections
+            if self.network.is_perimeter(inter.id)
+        ]
+
+        for inbound_link in active_terminals:
+            origin_id = inbound_link.to_int.id  # perimeter intersection
+            rate_per_s = inbound_link.inflow_vph / 3600.0
+            p = rate_per_s * dt * self.demand_scale
+            p = min(p, 1.0)
+            if self.rng.random() < p:
+                # Pick a destination uniformly from other perimeter intersections
+                candidates = [iid for iid in perimeter_ids if iid != origin_id]
+                if not candidates:
+                    continue
+                dest_id = candidates[int(self.rng.integers(0, len(candidates)))]
+                self._try_spawn_od(origin_id, dest_id)
 
     # ----------------- Main step -----------------
 

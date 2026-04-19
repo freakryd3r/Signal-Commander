@@ -450,6 +450,8 @@ def main():
         field3_input.set_text(str(inter.green_ew))
         field4_input.set_text(str(inter.offset))
 
+        field2_label.show()
+        field2_input.show()
         field3_label.show()
         field3_input.show()
         field4_label.show()
@@ -473,6 +475,33 @@ def main():
         field3_input.set_text("")
         field4_input.set_text("")
 
+        field2_label.show()
+        field2_input.show()
+        field3_label.hide()
+        field3_input.hide()
+        field4_label.hide()
+        field4_input.hide()
+
+        status_label.set_text("")
+    
+    def load_terminal_fields(terminal_link):
+        nonlocal current_mode
+        current_mode = "terminal"
+
+        object_type_label.set_text("Type: Inbound Terminal")
+
+        field1_label.set_text("Inflow (veh/hr)")
+        field2_label.set_text("")
+        field3_label.set_text("")
+        field4_label.set_text("")
+
+        field1_input.set_text(str(int(terminal_link.inflow_vph)))
+        field2_input.set_text("")
+        field3_input.set_text("")
+        field4_input.set_text("")
+
+        field2_label.hide()
+        field2_input.hide()
         field3_label.hide()
         field3_input.hide()
         field4_label.hide()
@@ -490,6 +519,8 @@ def main():
         field3_label.set_text("Field 3")
         field4_label.set_text("Field 4")
 
+        field2_label.show()
+        field2_input.show()
         field3_label.show()
         field3_input.show()
         field4_label.show()
@@ -519,23 +550,59 @@ def main():
 
                     clicked_intersection = network.get_intersection_at_point(wx, wy, threshold=15)
                     clicked_link = None
+                    clicked_terminal_link = None
 
+                    # Check for terminal node click first (blue in / red out dots)
                     if clicked_intersection is None:
+                        for terminal in network.get_terminal_nodes():
+                            dx = terminal.x_m - wx
+                            dy = terminal.y_m - wy
+                            if (dx * dx + dy * dy) ** 0.5 < 10:
+                                # Find the attached terminal link
+                                for link in network.terminal_links:
+                                    if link.from_int.id == terminal.id or link.to_int.id == terminal.id:
+                                        if link.in_or_out == "in":
+                                            clicked_terminal_link = link
+                                            break
+                                break
+
+                    # Interior link click (only if no intersection/terminal matched)
+                    if clicked_intersection is None and clicked_terminal_link is None:
                         clicked_link = network.get_link_at_point(wx, wy, threshold=12)
 
+                    # Also check for direct click on terminal link (line itself)
+                    if (clicked_intersection is None
+                            and clicked_terminal_link is None
+                            and clicked_link is None):
+                        for link in network.terminal_links:
+                            if link.in_or_out != "in":
+                                continue
+                            if network._point_near_line(
+                                wx, wy,
+                                link.from_int.x_m, link.from_int.y_m,
+                                link.to_int.x_m, link.to_int.y_m,
+                                12,
+                            ):
+                                clicked_terminal_link = link
+                                break
+
                     selected_intersection = clicked_intersection
-                    selected_link = clicked_link
+                    selected_link = clicked_link if clicked_terminal_link is None else clicked_terminal_link
 
                     if selected_intersection is not None:
                         info_label.set_text(f"Intersection: {selected_intersection.id}")
                         load_intersection_fields(selected_intersection)
+
+                    elif clicked_terminal_link is not None:
+                        info_label.set_text(f"Terminal: {clicked_terminal_link.id}")
+                        load_terminal_fields(clicked_terminal_link)
 
                     elif selected_link is not None:
                         info_label.set_text(f"Link: {selected_link.id}")
                         load_link_fields(selected_link)
 
                     else:
-                        info_label.set_text("Click an intersection or link")
+                        info_label.set_text("Click an intersection, link, or terminal")
                         clear_selection_ui()
             
             if event.type == pygame.KEYDOWN:
@@ -793,6 +860,15 @@ def main():
                             network.update_lanes(selected_link.id, lanes)
                             load_link_fields(selected_link)
                             status_label.set_text("Link updated")
+                    
+                    elif current_mode == "terminal" and selected_link is not None:
+                        inflow_vph = safe_int(field1_input.get_text(), int(selected_link.inflow_vph))
+                        if inflow_vph < 0:
+                            status_label.set_text("Inflow must be >= 0")
+                        else:
+                            network.update_inflow_vph(selected_link.id, inflow_vph)
+                            load_terminal_fields(selected_link)
+                            status_label.set_text("Inflow updated")
 
                     elif current_mode == "link" and selected_link is not None:
                         length_m = safe_int(field1_input.get_text(), int(selected_link.length_m))
@@ -903,8 +979,14 @@ def main():
             for link in network.get_terminal_links():
                 x1, y1 = world_to_screen(link.from_int.x_m, link.from_int.y_m)
                 x2, y2 = world_to_screen(link.to_int.x_m, link.to_int.y_m)
-                pygame.draw.line(screen, TERMINAL_LINK_COLOR, (x1, y1), (x2, y2), 2)
 
+                color = TERMINAL_LINK_COLOR
+                width = 2
+                if selected_link is not None and link.id == selected_link.id:
+                    color = SELECTED_COLOR
+                    width = 5
+
+                pygame.draw.line(screen, color, (x1, y1), (x2, y2), width)
             for link in network.links:
                 x1, y1 = world_to_screen(link.from_int.x_m, link.from_int.y_m)
                 x2, y2 = world_to_screen(link.to_int.x_m, link.to_int.y_m)

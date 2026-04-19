@@ -113,7 +113,7 @@ class Link:
         lanes,
         is_terminal_link=False,
         boundary_side=None,
-        in_or_out=None,
+        in_or_out=None
     ):
         self.id = id
         self.from_int = from_int
@@ -124,6 +124,7 @@ class Link:
         self.is_terminal_link = is_terminal_link
         self.boundary_side = boundary_side  # "N", "S", "E", "W" for terminal links
         self.in_or_out = in_or_out          # "in" or "out" for terminal links
+        self.inflow_vph = 0.0
 
     def get_midpoint(self):
         return (
@@ -486,6 +487,17 @@ class Network:
 
     def update_link_length(self, link_id, new_length):
         target_link = self.get_link_by_id(link_id)
+    
+    def update_inflow_vph(self, link_id, new_vph):
+        """
+        Set the inflow rate for an inbound terminal link.
+        Ignored if the link is not an inbound terminal.
+        """
+        for link in self.terminal_links:
+            if link.id == link_id and link.in_or_out == "in":
+                link.inflow_vph = max(0.0, float(new_vph))
+                return True
+        return False
 
         if target_link is None:
             return
