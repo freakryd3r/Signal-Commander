@@ -128,12 +128,7 @@ def main():
 
     manager = pygame_gui.UIManager((info.current_w, info.current_h))
 
-    pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 10), (SIDEBAR_WIDTH - 20, 30)),
-        text="SIGNAL LORD",
-        manager=manager,
-        object_id="#sidebar_title"
-    )
+    
 
     setup_title_label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 50), (SIDEBAR_WIDTH - 20, 24)),
@@ -1109,6 +1104,35 @@ def main():
 
 
         manager.draw_ui(screen)
+
+        # ===== Title rendering: SIGNAL LORD =====
+        try:
+            title_font = pygame.font.SysFont("Impact", 48, bold=True)
+        except Exception:
+            title_font = pygame.font.SysFont("Arial", 48, bold=True)
+
+        # Shadow layer — slight offset, subtle dark color
+        shadow = title_font.render("SIGNAL LORD", True, (30, 30, 35))
+        title_surface = title_font.render("SIGNAL LORD", True, (240, 200, 60))
+
+        title_x = CANVAS_WIDTH + (SIDEBAR_WIDTH - title_surface.get_width()) // 2
+        title_y = 10
+
+        screen.blit(shadow, (title_x + 2, title_y + 2))
+        screen.blit(title_surface, (title_x, title_y))
+
+        # Decorative underline
+        underline_y = title_y + title_surface.get_height() + 4
+        underline_x1 = CANVAS_WIDTH + 30
+        underline_x2 = CANVAS_WIDTH + SIDEBAR_WIDTH - 30
+        pygame.draw.line(
+            screen,
+            (240, 200, 60),
+            (underline_x1, underline_y),
+            (underline_x2, underline_y),
+            2,
+        )
+
         if sim is not None:
             # Blend fraction: 0 right after a physics tick, approaching 1
             # just before the next tick fires.
