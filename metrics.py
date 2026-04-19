@@ -355,13 +355,10 @@ def websters_delay(
 
     opp = opposing_approach(approach)
     q0_vph = float(intersection_state.last_cycle_flows[opp])
-
     q0_c_over_g = q0_vph * cycle_length_s / green_s
-    e_left = lookup_unprotected_left_equivalence_factor(
-        opposing_lanes=opposing_lanes,
-        q0_c_over_g=q0_c_over_g,
-    )
+
     if q0_c_over_g <= 0:
+        # No opposing flow — use default eL for the opposing_lanes value
         if opposing_lanes == 1:
             e_left = 1.6
         elif opposing_lanes == 2:
@@ -375,7 +372,7 @@ def websters_delay(
             opposing_lanes=opposing_lanes,
             q0_c_over_g=q0_c_over_g,
         )
-    equivalent_flow_vph = (
+        equivalent_flow_vph = (
         q_through
         + RIGHT_TURN_EQUIV * q_right
         + e_left * q_left
