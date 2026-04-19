@@ -75,6 +75,7 @@ STOP_LINE_OFFSET_M = 5.0
 STOPPED_SPEED_THRESHOLD_MS = 0.5
 DRIVER_REACTION_TIME_S = 1.0
 QUEUE_DETECTION_ZONE_M = 50.0
+SIM_DURATION_S = 3600.0 
 DEFAULT_BUS_DWELL_S = 20.0
 BUS_STOP_TRIGGER_DISTANCE_M = 1.0
 VIRTUAL_QUEUE_CAP = 50
@@ -224,6 +225,7 @@ class SimulationState:
     dt_s: float = 1.0
     sim_running: bool = False
     warmup_complete: bool = False
+    sim_completed: bool = False
 
     # Live mutable lists — read-only by convention (contract w/ metrics.py)
     agents: list = field(default_factory=list)
@@ -602,6 +604,7 @@ class Simulation:
         self.state.time_s = 0.0
         self.state.sim_running = False
         self.state.warmup_complete = False
+        self.state.sim_completed = False
         self.state.completed_trips.clear()
         self.state.completed_trips_this_step.clear()
         self.state.denied_entries_total = 0
@@ -1026,10 +1029,18 @@ class Simulation:
         """
         if not self.state.sim_running:
             return
+        if self.state.sim_completed:
+            return
 
         self.state.dt_s = dt
         self.state.time_s += dt
         self.state.warmup_complete = self.state.time_s >= WARMUP_DURATION
+
+        # Check completion AFTER advancing time so the final step runs
+        if self.state.time_s >= SIM_DURATION_S:
+            self.state.sim_completed = True
+            self.state.sim_running = False
+            return
 
         # 1. Reset per-step counters
         self.state.completed_trips_this_step.clear()

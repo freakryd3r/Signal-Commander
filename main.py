@@ -119,7 +119,7 @@ def draw_signal_head(screen, center_x, center_y, approach_angle_rad, phase_state
 def main():
     pygame.init()
     pygame.display.set_caption("Signal Lord")
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
     clock = pygame.time.Clock()
 
     manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -191,26 +191,42 @@ def main():
 
     # Simulation control buttons
     start_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 560), (80, 32)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 580), (80, 32)),
         text="Start",
         manager=manager
     )
 
     pause_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 100, 560), (80, 32)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 100, 580), (80, 32)),
         text="Pause",
         manager=manager
     )
 
     reset_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 190, 560), (80, 32)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 190, 580), (80, 32)),
         text="Reset",
         manager=manager
     )
 
+    fast30_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 535), (100, 32)),
+        text="60m → 30s",
+        manager=manager
+    )
+    fast60_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 120, 535), (100, 32)),
+        text="60m → 1m",
+        manager=manager
+    )
+    fast300_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 230, 535), (100, 32)),
+        text="60m → 5m",
+        manager=manager
+    )
+
     sim_status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 600), (SIDEBAR_WIDTH - 20, 24)),
-        text="PAUSED  |  t = 0.0s",
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 620), (SIDEBAR_WIDTH - 20, 24)),
+        text="PAUSED  |  t = 0.0s / 3600s  |  Speed: 1x",
         manager=manager
     )
 
@@ -218,64 +234,64 @@ def main():
 
     # Horizontal separator visual (a simple thin label)
     pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 640), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 660), (SIDEBAR_WIDTH - 20, 24)),
         text="— NETWORK METRICS —",
         manager=manager
     )
 
     # Network metrics readout: 6 lines of key numbers
     net_completed_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 670), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 690), (SIDEBAR_WIDTH - 20, 22)),
         text="Completed trips: 0",
         manager=manager
     )
 
     net_active_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 692), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 712), (SIDEBAR_WIDTH - 20, 22)),
         text="Active vehicles: 0",
         manager=manager
     )
 
     net_delay_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 714), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 734), (SIDEBAR_WIDTH - 20, 22)),
         text="Mean delay: 0.0 s",
         manager=manager
     )
 
     net_tt_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 736), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 756), (SIDEBAR_WIDTH - 20, 22)),
         text="Mean travel time: 0.0 s",
         manager=manager
     )
 
     net_p85_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 758), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 778), (SIDEBAR_WIDTH - 20, 22)),
         text="85th %ile travel: 0.0 s",
         manager=manager
     )
 
     net_denied_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 780), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 800), (SIDEBAR_WIDTH - 20, 22)),
         text="Denied entries: 0",
         manager=manager
     )
 
     # Action buttons row
     webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 815), (170, 30)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 835), (170, 30)),
         text="Webster Optimal",
         manager=manager
     )
 
     apply_webster_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 185, 815), (80, 30)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 185, 835), (80, 30)),
         text="Apply",
         manager=manager
     )
     apply_webster_button.disable()  # disabled until a recommendation is computed
 
     webster_result_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 850), (SIDEBAR_WIDTH - 20, 22)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 870), (SIDEBAR_WIDTH - 20, 22)),
         text="",
         manager=manager
     )
@@ -341,7 +357,7 @@ def main():
     )
 
     status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 510), (SIDEBAR_WIDTH - 20, 24)),
+        relative_rect=pygame.Rect((CANVAS_WIDTH + 10, 500), (SIDEBAR_WIDTH - 20, 24)),
         text="",
         manager=manager
     )
@@ -416,6 +432,11 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
 
+            if event.type == pygame.VIDEORESIZE:
+                screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+                if hasattr(manager, 'set_window_resolution'):
+                    manager.set_window_resolution((event.w, event.h))
+
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
 
@@ -471,8 +492,11 @@ def main():
                     status_label.set_text("Network created (paused)")
 
                 if event.ui_element == start_button and sim is not None:
-                    sim.resume()
-                    status_label.set_text("Simulation started")
+                    if sim.state.sim_completed:
+                        status_label.set_text("Simulation complete — press Reset")
+                    else:
+                        sim.resume()
+                        status_label.set_text("Simulation started")
 
                 if event.ui_element == pause_button and sim is not None:
                     sim.pause()
@@ -483,11 +507,24 @@ def main():
                     # Rebuild the debug scenario so cars re-spawn at t=0 and t=3.
                     network, sim = setup_am_peak()
                     sim.pause()
+                    sim.set_speed(1)
                     metrics_engine = MetricsEngine()
                     pending_webster_recommendation = None
                     selected_intersection = None
                     selected_link = None
                     status_label.set_text("Simulation reset (paused)")
+
+                if event.ui_element == fast30_button and sim is not None:
+                    sim.set_speed(120)
+                    status_label.set_text("Speed set to 120x: 60 min in 30 sec")
+
+                if event.ui_element == fast60_button and sim is not None:
+                    sim.set_speed(60)
+                    status_label.set_text("Speed set to 60x: 60 min in 1 min")
+
+                if event.ui_element == fast300_button and sim is not None:
+                    sim.set_speed(12)
+                    status_label.set_text("Speed set to 12x: 60 min in 5 min")
                 
                 # ===== Phase 8 Block C: action button handlers =====
 
@@ -611,10 +648,16 @@ def main():
         manager.update(dt)
 
         # Refresh the sim status label every frame
+        # Refresh the sim status label every frame
         if sim is not None:
-            running_text = "RUNNING" if sim.state.sim_running else "PAUSED"
+            if sim.state.sim_completed:
+                running_text = "COMPLETED"
+            elif sim.state.sim_running:
+                running_text = "RUNNING"
+            else:
+                running_text = "PAUSED"
             sim_status_label.set_text(
-                f"{running_text}  |  t = {sim.state.time_s:.1f}s"
+                f"{running_text}  |  t = {sim.state.time_s:.1f}s / 3600s  |  Speed: {sim.speed_multiplier}x"
             )
 
         # Refresh metric panels every METRICS_UPDATE_INTERVAL_S simulated seconds
@@ -656,7 +699,8 @@ def main():
                 )
 
         if sim is not None:
-            sim.step(dt)
+            for _ in range(sim.speed_multiplier):
+                sim.step(dt)
             metrics_engine.update(sim.get_state())    
         if network is not None:
             world_to_screen, screen_to_world = make_transform(
@@ -795,6 +839,41 @@ def main():
                     radius = 5
                 pygame.draw.circle(screen, color, (ax, ay), radius)
         
+        # Simulation Complete overlay
+        if sim is not None and sim.state.sim_completed:
+            # Semi-transparent dark panel across the middle of the canvas
+            overlay_w = 400
+            overlay_h = 120
+            overlay_x = (CANVAS_WIDTH - overlay_w) // 2
+            overlay_y = (CANVAS_HEIGHT - overlay_h) // 2
+
+            # Dark translucent background
+            overlay_surface = pygame.Surface((overlay_w, overlay_h), pygame.SRCALPHA)
+            overlay_surface.fill((20, 25, 35, 220))
+            screen.blit(overlay_surface, (overlay_x, overlay_y))
+
+            # Gold border
+            pygame.draw.rect(
+                screen,
+                (220, 180, 60),
+                pygame.Rect(overlay_x, overlay_y, overlay_w, overlay_h),
+                3,
+            )
+
+            # Main text
+            big_font = pygame.font.SysFont("Arial", 32, bold=True)
+            small_font = pygame.font.SysFont("Arial", 16)
+            line1 = big_font.render("SIMULATION COMPLETE", True, (255, 255, 255))
+            line2 = small_font.render(
+                f"1-hour run finished — click Reset to restart",
+                True,
+                (200, 200, 210),
+            )
+            line1_rect = line1.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 45))
+            line2_rect = line2.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 85))
+            screen.blit(line1, line1_rect)
+            screen.blit(line2, line2_rect)
+
         pygame.display.flip()
 
     pygame.quit()
