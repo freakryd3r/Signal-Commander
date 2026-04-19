@@ -322,7 +322,8 @@ def main():
     )
 
     # Network metrics separator
-    pygame_gui.elements.UILabel(
+    # Horizontal separator visual — toggles between network and intersection mode
+    metrics_header_label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 620), (SIDEBAR_WIDTH + 80, 24)),
         text="— NETWORK METRICS —",
         manager=manager
@@ -549,6 +550,8 @@ def main():
                     if selected_intersection is not None:
                         info_label.set_text(f"Intersection: {selected_intersection.id}")
                         load_intersection_fields(selected_intersection)
+                        # Trigger immediate metrics refresh on new selection
+                        last_metrics_update_s = -1.0
 
                     elif clicked_terminal_link is not None:
                         info_label.set_text(f"Terminal: {clicked_terminal_link.id}")
@@ -558,9 +561,21 @@ def main():
                         info_label.set_text(f"Link: {selected_link.id}")
                         load_link_fields(selected_link)
 
+                    elif clicked_terminal_link is not None:
+                        info_label.set_text(f"Terminal: {clicked_terminal_link.id}")
+                        load_terminal_fields(clicked_terminal_link)
+                        last_metrics_update_s = -1.0
+
+                    elif selected_link is not None:
+                        info_label.set_text(f"Link: {selected_link.id}")
+                        load_link_fields(selected_link)
+                        last_metrics_update_s = -1.0
+
                     else:
                         info_label.set_text("Click an intersection, link, or terminal")
                         clear_selection_ui()
+                        # Trigger immediate refresh back to network metrics
+                        last_metrics_update_s = -1.0
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
@@ -762,41 +777,64 @@ def main():
             )
 
         # Refresh metric panels every METRICS_UPDATE_INTERVAL_S simulated seconds
+        # Refresh metric panels every METRICS_UPDATE_INTERVAL_S simulated seconds
         if sim is not None and sim.state.time_s - last_metrics_update_s >= METRICS_UPDATE_INTERVAL_S:
             last_metrics_update_s = sim.state.time_s
             state = sim.get_state()
 
-            # Network-level metrics
             cached_net_metrics = metrics_engine.get_network_metrics()
             cached_intersection_metrics = metrics_engine.get_intersection_metrics(state)
 
-            # Update sidebar labels
-            net_completed_label.set_text(
-                f"Completed trips: {int(cached_net_metrics['total_completed_trips'])}"
-            )
-            active_count = len([a for a in state.agents if a.active])
-            net_active_label.set_text(f"Active vehicles: {active_count}")
-            net_delay_label.set_text(
-                f"Mean delay: {cached_net_metrics['network_mean_delay_s']:.1f} s"
-            )
-            net_tt_label.set_text(
-                f"Mean travel time: {cached_net_metrics['mean_travel_time_s']:.1f} s"
-            )
-            net_p85_label.set_text(
-                f"85th %ile travel: {cached_net_metrics['p85_travel_time_s']:.1f} s"
-            )
-            net_denied_label.set_text(
-                f"Denied entries: {int(cached_net_metrics['denied_entries'])}"
-            )
-
-            # If an intersection is selected, update its live LOS info
+            # If an intersection is selected, display its metrics in place of network metrics
             if (current_mode == "intersection"
                     and selected_intersection is not None
                     and selected_intersection.id in cached_intersection_metrics):
                 im = cached_intersection_metrics[selected_intersection.id]
+                iid = selected_intersection.id
+
+                metrics_header_label.set_text(f"— {iid} METRICS —")
+
+                net_completed_label.set_text(f"[{iid}]  LOS {im['los']}")
+                net_active_label.set_text(
+                    f"Mean delay: {im['mean_delay_sec_per_veh']:.1f} s"
+                )
+                net_delay_label.set_text(
+                    f"Throughput: {int(im['throughput_veh_hr'])} veh/hr"
+                )
+                net_tt_label.set_text(
+                    f"V/C ratio: {im['vc_ratio']:.2f}"
+                )
+                # Queue per approach, compact format
+                q = im['queue_by_approach']
+                net_p85_label.set_text(
+                    f"Queue N:{q['N']} S:{q['S']} E:{q['E']} W:{q['W']}"
+                )
+                net_denied_label.set_text(
+                    f"Total queue: {im['total_queue_veh']} ({im['max_queue_approach']}:{im['max_queue_veh']} max)"
+                )
+
                 info_label.set_text(
-                    f"Intersection {selected_intersection.id} "
-                    f"— LOS {im['los']} ({im['mean_delay_sec_per_veh']:.1f}s)"
+                    f"Intersection {iid} — LOS {im['los']} ({im['mean_delay_sec_per_veh']:.1f}s)"
+                )
+            else:
+                # Default: network-level metrics
+                metrics_header_label.set_text("— NETWORK METRICS —")
+                net_completed_label.set_text(
+                    f"Completed trips: {int(cached_net_metrics['total_completed_trips'])}"
+                )
+                active_count = len([a for a in state.agents if a.active])
+                net_active_label.set_text(f"Active vehicles: {active_count}")
+                net_delay_label.set_text(
+                    f"Mean delay: {cached_net_metrics['network_mean_delay_s']:.1f} s"
+                )
+                net_tt_label.set_text(
+                    f"Mean travel time: {cached_net_metrics['mean_travel_time_s']:.1f} s"
+                )
+                net_p85_label.set_text(
+                    f"85th %ile travel: {cached_net_metrics['p85_travel_time_s']:.1f} s"
+                )
+                net_denied_label.set_text(
+                    f"Denied entries: {int(cached_net_metrics['denied_entries'])}"
                 )
 
         # Physics stepping: accumulate wall-clock time × speed_multiplier,
@@ -959,15 +997,15 @@ def main():
 
         # ===== Title rendering: SIGNAL LORD =====
         try:
-            title_font = pygame.font.SysFont("Impact", 32, bold=True)
+            title_font = pygame.font.SysFont("Impact", 32, bold=False)
         except Exception:
-            title_font = pygame.font.SysFont("Arial", 32, bold=True)
+            title_font = pygame.font.SysFont("Arial", 32, bold=False)
 
         # Shadow layer — slight offset, subtle dark color
         shadow = title_font.render("SIGNAL LORD", True, (30, 30, 35))
         title_surface = title_font.render("SIGNAL LORD", True, (240, 200, 60))
 
-        title_x = SIDEBAR_LEFT + (SIDEBAR_WIDTH - title_surface.get_width()) // 2
+        title_x = title_x = SIDEBAR_LEFT + (SIDEBAR_WIDTH - title_surface.get_width()) // 2 + 40
         title_y = 7
 
         screen.blit(shadow, (title_x + 2, title_y + 2))
@@ -975,8 +1013,8 @@ def main():
 
         # Decorative underline
         underline_y = title_y + title_surface.get_height() + 4
-        underline_x1 = SIDEBAR_LEFT + 30
-        underline_x2 = SIDEBAR_LEFT + SIDEBAR_WIDTH - 30
+        underline_x1 = SIDEBAR_LEFT + 30 + 40
+        underline_x2 = SIDEBAR_LEFT + SIDEBAR_WIDTH - 30 + 40
 
         pygame.draw.line(
             screen,

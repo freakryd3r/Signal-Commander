@@ -177,29 +177,94 @@ class IntersectionMovementConfig:
 # BASIC METRIC HELPERS
 # =============================================================================
 
-def level_of_service(delay_s: float) -> Tuple[str, Tuple[int, int, int]]:
+def level_of_service(delay_s: float, total_queue_veh: int = 0) -> Tuple[str, Tuple[int, int, int]]:
     """
-    Return HCM-style LOS label and badge color using control delay thresholds.
+    Return HCM-style LOS label and badge color.
+
+    Uses control delay for primary rating, but upgrades to worse LOS
+    when total queue length indicates oversaturation that Webster delay
+    underestimates (because queued vehicles aren't counted as flow).
+
+    Queue-based thresholds (returned LOS is worst of delay-LOS and queue-LOS):
+        queue > 10 vehicles → at least LOS C
+        queue > 20 vehicles → at least LOS D
+        queue > 30 vehicles → at least LOS E
+        queue > 50 vehicles → LOS F
     """
     if delay_s < 0:
         raise ValueError("delay_s must be nonnegative.")
 
+    # Standard delay-based LOS
     if delay_s <= 10:
-        return "A", (0, 200, 0)
-    if delay_s <= 20:
-        return "B", (100, 220, 0)
-    if delay_s <= 35:
-        return "C", (200, 200, 0)
-    if delay_s <= 55:
-        return "D", (255, 150, 0)
-    if delay_s <= 80:
-        return "E", (255, 80, 0)
-    return "F", (255, 0, 0)
+        los_from_delay = ("A", (0, 200, 0))
+    elif delay_s <= 20:
+        los_from_delay = ("B", (100, 220, 0))
+    elif delay_s <= 35:
+        los_from_delay = ("C", (200, 200, 0))
+    elif delay_s <= 55:
+        los_from_delay = ("D", (255, 150, 0))
+    elif delay_s <= 80:
+        los_from_delay = ("E", (255, 80, 0))
+    else:
+        los_from_delay = ("F", (255, 0, 0))
+
+    # Queue-based escalation
+    queue_cap_los = None
+    if total_queue_veh > 50:
+        queue_cap_los = ("F", (255, 0, 0))
+    elif total_queue_veh > 30:
+        queue_cap_los = ("E", (255, 80, 0))
+    elif total_queue_veh > 20:
+        queue_cap_los = ("D", (255, 150, 0))
+    elif total_queue_veh > 10:
+        queue_cap_los = ("C", (200, 200, 0))
+
+    # Return the worse of the two
+    if queue_cap_los is None:
+        return los_from_delay
+
+    los_order = "ABCDEF"
+    if los_order.index(queue_cap_los[0]) > los_order.index(los_from_delay[0]):
+        return queue_cap_los
+    return los_from_delay
+
+
+# LOS palette for reference (matches level_of_service):
+#   A: (0, 200, 0)     free flow
+#   B: (100, 220, 0)   slight congestion
+#   C: (200, 200, 0)   moderate
+#   D: (255, 150, 0)   heavy
+#   E: (255, 80, 0)    severe
+#   F: (255, 0, 0)     jam
+_LOS_GRADIENT_STOPS = [
+    (0.00, (0, 200, 0)),      # A
+    (0.20, (100, 220, 0)),    # B
+    (0.40, (200, 200, 0)),    # C
+    (0.60, (255, 150, 0)),    # D
+    (0.80, (255, 80, 0)),     # E
+    (1.00, (255, 0, 0)),      # F
+]
+
+
+def _interp_color(c1: Tuple[int, int, int], c2: Tuple[int, int, int], t: float) -> Tuple[int, int, int]:
+    """Linearly interpolate between two RGB colors. t in [0, 1]."""
+    return (
+        int(c1[0] + (c2[0] - c1[0]) * t),
+        int(c1[1] + (c2[1] - c1[1]) * t),
+        int(c1[2] + (c2[2] - c1[2]) * t),
+    )
 
 
 def link_density_color(density_veh_per_km: float, jam_density: float = 150.0) -> Tuple[int, int, int]:
     """
-    Map link density to a simple green-yellow-red heatmap color.
+    Map link density to a color in the LOS A–F gradient.
+
+    Density ratio (0 to 1) walks through the same color stops the LOS
+    badges use. Colors interpolate smoothly between adjacent stops so
+    links fade through the LOS palette as congestion grows.
+
+    Low density → LOS A green.
+    High density → LOS F red.
     """
     if density_veh_per_km < 0:
         raise ValueError("density_veh_per_km must be nonnegative.")
@@ -208,9 +273,21 @@ def link_density_color(density_veh_per_km: float, jam_density: float = 150.0) ->
 
     ratio = min(density_veh_per_km / jam_density, 1.0)
 
-    if ratio < 0.5:
-        return (int(255 * ratio * 2), 255, 0)
-    return (255, int(255 * (1 - (ratio - 0.5) * 2)), 0)
+    # Find which two stops we're between
+    for i in range(len(_LOS_GRADIENT_STOPS) - 1):
+        lo_r, lo_color = _LOS_GRADIENT_STOPS[i]
+        hi_r, hi_color = _LOS_GRADIENT_STOPS[i + 1]
+        if lo_r <= ratio <= hi_r:
+            # How far between lo and hi are we?
+            segment_width = hi_r - lo_r
+            if segment_width > 0:
+                t = (ratio - lo_r) / segment_width
+            else:
+                t = 0
+            return _interp_color(lo_color, hi_color, t)
+
+    # Ratio at exactly 1.0 or above (clamped to 1.0 above anyway)
+    return _LOS_GRADIENT_STOPS[-1][1]
 
 
 def mean_travel_time(completed_trips: List[Dict[str, Any]]) -> float:
@@ -977,7 +1054,8 @@ class MetricsEngine:
                 avg_throughput = float(np.mean(throughput_samples)) if throughput_samples else 0.0
                 max_throughput = float(np.max(throughput_samples)) if throughput_samples else 0.0
 
-                los, los_color = level_of_service(avg_delay)
+                avg_queue_for_los = float(np.mean(queue_samples)) if queue_samples else 0.0
+                los, los_color = level_of_service(avg_delay, total_queue_veh=int(avg_queue_for_los))
 
                 summary[intersection_id] = {
                     "avg_delay_sec_per_veh": avg_delay,
@@ -1034,7 +1112,20 @@ class MetricsEngine:
                     approach_delays[approach] = None
 
             mean_delay_s = float(np.mean(delays)) if delays else 0.0
-            los, los_color = level_of_service(mean_delay_s)
+
+            # Instantaneous queue (displayed in metrics panel)
+            total_queue = sum(inter.queue_lengths.values())
+
+            # Smoothed queue (for LOS calculation) — average of last 3 samples
+            # avoids flickering LOS when queue oscillates with signal cycle
+            hist = self.intersection_history.get(intersection_id)
+            if hist and len(hist["queue_samples"]) >= 10:
+                recent_samples = hist["queue_samples"][-10:]
+                smoothed_queue = int(sum(recent_samples) / len(recent_samples))
+            else:
+                smoothed_queue = total_queue
+
+            los, los_color = level_of_service(mean_delay_s, total_queue_veh=smoothed_queue)
 
             throughput_vph = float(sum(inter.last_cycle_flows.values()))
             capacity_vph = SAT_FLOW * ((green_ns_s / cycle_length_s) * 2 + (green_ew_s / cycle_length_s) * 2)
@@ -1045,7 +1136,7 @@ class MetricsEngine:
                 "E": int(inter.queue_lengths.get("E", 0)),
                 "W": int(inter.queue_lengths.get("W", 0)),
             }
-            total_queue = sum(queue_by_approach.values())
+            # total_queue already computed above for LOS calculation
             max_queue_approach = max(queue_by_approach, key=queue_by_approach.get)
             max_queue_value = queue_by_approach[max_queue_approach]
 
