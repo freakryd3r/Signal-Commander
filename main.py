@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from simulation import Simulation
 from debug import setup_debug_one_car, setup_am_peak
-from metrics import MetricsEngine, websters_optimal_cycle_simple
+from metrics import MetricsEngine, websters_optimal_cycle_simple, compute_network_score
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, SIDEBAR_WIDTH, CANVAS_WIDTH,
     CANVAS_HEIGHT, FPS, BG_COLOR, GRID_BG, LINK_COLOR,
@@ -380,6 +380,7 @@ def main():
     selected_link = None
     current_mode = "none"
     sim_time_accumulator = 0.0
+    cached_final_score = None
     is_fullscreen = True
     windowed_size = (WINDOW_WIDTH, WINDOW_HEIGHT)
     prev_agent_positions = {}
@@ -621,6 +622,7 @@ def main():
                     heatmap_enabled = False
                     pending_webster_recommendation = None
                     sim_time_accumulator = 0.0
+                    cached_final_score = None
                     selected_intersection = None
                     selected_link = None
                     info_label.set_text("Network created. Click an intersection or link.")
@@ -647,6 +649,7 @@ def main():
                     metrics_engine = MetricsEngine()
                     pending_webster_recommendation = None
                     sim_time_accumulator = 0.0
+                    cached_final_score = None
                     selected_intersection = None
                     selected_link = None
                     status_label.set_text("Simulation reset (paused)")
@@ -1061,17 +1064,24 @@ def main():
                     radius = 5
                 pygame.draw.circle(screen, color, (ax, ay), radius)
 
-        # Simulation Complete overlay
+        # Simulation Complete overlay with score
         if sim is not None and sim.state.sim_completed:
-            # Semi-transparent dark panel across the middle of the canvas
-            overlay_w = 400
-            overlay_h = 120
-            overlay_x = (CANVAS_WIDTH - overlay_w) // 2
+            # Compute score once on first frame after completion, cache it
+            if cached_final_score is None:
+                cached_final_score = compute_network_score(sim.get_state())
+
+            # Expanded overlay: 500x380 for score breakdown
+            overlay_w = 500
+            overlay_h = 380
+            # Center on the canvas area (not the full window)
+            window_w, _window_h = screen.get_size()
+            canvas_w = SIDEBAR_LEFT
+            overlay_x = (canvas_w - overlay_w) // 2
             overlay_y = (CANVAS_HEIGHT - overlay_h) // 2
 
             # Dark translucent background
             overlay_surface = pygame.Surface((overlay_w, overlay_h), pygame.SRCALPHA)
-            overlay_surface.fill((20, 25, 35, 220))
+            overlay_surface.fill((15, 18, 25, 235))
             screen.blit(overlay_surface, (overlay_x, overlay_y))
 
             # Gold border
@@ -1082,19 +1092,89 @@ def main():
                 3,
             )
 
-            # Main text
-            big_font = pygame.font.SysFont("Arial", 32, bold=True)
-            small_font = pygame.font.SysFont("Arial", 16)
-            line1 = big_font.render("SIMULATION COMPLETE", True, (255, 255, 255))
-            line2 = small_font.render(
-                f"1-hour run finished — click Reset to restart",
-                True,
-                (200, 200, 210),
+            # Font setup
+            title_font = pygame.font.SysFont("Arial", 22, bold=False)
+            score_font = pygame.font.SysFont("Impact", 58, bold=False)
+            rating_font = pygame.font.SysFont("Arial", 22, bold=False)
+            small_font = pygame.font.SysFont("Arial", 14)
+            grid_font = pygame.font.SysFont("Arial", 14)
+
+            # Title
+            title = title_font.render("SIMULATION COMPLETE", True, (255, 255, 255))
+            title_rect = title.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 30))
+            screen.blit(title, title_rect)
+
+            # Big score number
+            score_text = f"{int(round(cached_final_score['network_score']))}"
+            score_surface = score_font.render(score_text, True, cached_final_score["color"])
+            score_rect = score_surface.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 95))
+            screen.blit(score_surface, score_rect)
+
+            # "/ 100" subtitle
+            score_sub = small_font.render("/ 100", True, (180, 180, 190))
+            score_sub_rect = score_sub.get_rect(
+                center=(overlay_x + overlay_w // 2, overlay_y + 140)
             )
-            line1_rect = line1.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 45))
-            line2_rect = line2.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 85))
-            screen.blit(line1, line1_rect)
-            screen.blit(line2, line2_rect)
+            screen.blit(score_sub, score_sub_rect)
+
+            # Rating text
+            rating = rating_font.render(
+                cached_final_score["rating"], True, cached_final_score["color"]
+            )
+            rating_rect = rating.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 170))
+            screen.blit(rating, rating_rect)
+
+            # Per-intersection breakdown header
+            breakdown_label = small_font.render(
+                "Per-intersection scores:", True, (200, 200, 210)
+            )
+            breakdown_rect = breakdown_label.get_rect(
+                center=(overlay_x + overlay_w // 2, overlay_y + 205)
+            )
+            screen.blit(breakdown_label, breakdown_rect)
+
+            # 3x3 grid of intersection scores (matches network layout)
+            int_scores = cached_final_score["intersection_scores"]
+            grid_start_x = overlay_x + 80
+            grid_start_y = overlay_y + 230
+            grid_cell_w = 115
+            grid_cell_h = 30
+
+            for row in range(3):
+                for col in range(3):
+                    iid = f"I_{row}_{col}"
+                    score = int_scores.get(iid)
+                    cell_x = grid_start_x + col * grid_cell_w
+                    cell_y = grid_start_y + row * grid_cell_h
+
+                    if score is None:
+                        text = f"{iid}: —"
+                        color = (120, 120, 130)
+                    else:
+                        text = f"{iid}: {int(round(score))}"
+                        # Color-code per-intersection scores too
+                        if score >= 90:
+                            color = (0, 200, 0)
+                        elif score >= 75:
+                            color = (100, 220, 0)
+                        elif score >= 60:
+                            color = (200, 200, 0)
+                        elif score >= 40:
+                            color = (255, 150, 0)
+                        else:
+                            color = (255, 60, 60)
+
+                    cell_surface = grid_font.render(text, True, color)
+                    screen.blit(cell_surface, (cell_x, cell_y))
+
+            # Footer: reset instruction
+            footer = small_font.render(
+                "Click Reset to try again", True, (200, 200, 210)
+            )
+            footer_rect = footer.get_rect(
+                center=(overlay_x + overlay_w // 2, overlay_y + overlay_h - 25)
+            )
+            screen.blit(footer, footer_rect)
 
         pygame.display.flip()
 

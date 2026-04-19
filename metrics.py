@@ -1335,3 +1335,151 @@ def export_csv(
     
         ])
         
+# =============================================================================
+# NETWORK SCORING
+# =============================================================================
+
+def compute_network_score(
+    sim_state: Any,
+    yellow_s: float = 3.0,
+    all_red_s: float = 2.0,
+    startup_lost_per_phase_s: float = 2.0,
+) -> Dict[str, Any]:
+    """
+    Compute user vs. Webster-optimal scoring at end of simulation.
+
+    For each intersection:
+      1. Compute user_delay using the current (user-set) signal timing
+         applied to the measured last_cycle_flows.
+      2. Compute Webster-optimal signal timing from the same flows.
+      3. Compute webster_delay using that optimal timing.
+      4. Score = min(100, (webster_delay / user_delay) * 100)
+         - If user_delay == 0, score = 100 (user's timing has no delay)
+         - If webster_delay is unavailable, intersection is excluded.
+
+    Returns a dict with:
+        network_score: 0-100, average of per-intersection scores
+        intersection_scores: dict mapping intersection_id -> score (0-100)
+        rating: text label for the network score
+        color: RGB tuple for the network score color
+        details: dict with raw user_delay and webster_delay per intersection
+    """
+    intersection_scores: Dict[str, float] = {}
+    details: Dict[str, Dict[str, float]] = {}
+
+    for intersection_id, inter in sim_state.intersections.items():
+        # Skip if no measured flows (no signal cycle completed)
+        if not has_valid_last_cycle_flows(inter):
+            continue
+
+        # User's current timing
+        user_cycle = float(inter.cycle_length_s)
+        user_green_ns = float(inter.green_ns_s)
+        user_green_ew = float(inter.green_ew_s)
+
+        if user_cycle <= 0 or user_green_ns <= 0 or user_green_ew <= 0:
+            continue
+
+        # Compute user's delay from their timing
+        try:
+            user_delays: List[float] = []
+            for approach in ("N", "S", "E", "W"):
+                green = user_green_ns if approach in ("N", "S") else user_green_ew
+                delay = websters_delay(
+                    intersection_state=inter,
+                    approach=approach,
+                    cycle_length_s=user_cycle,
+                    green_s=green,
+                )
+                user_delays.append(delay)
+            user_delay_mean = float(np.mean(user_delays)) if user_delays else 0.0
+        except ValueError:
+            continue  # Can't score if delay calc fails
+
+        # Compute Webster-optimal timing from flows
+        try:
+            rec = websters_optimal_cycle_simple(
+                intersection_state=inter,
+                yellow_s=yellow_s,
+                all_red_s=all_red_s,
+                startup_lost_per_phase_s=startup_lost_per_phase_s,
+            )
+        except ValueError:
+            continue  # Webster failed (e.g., Y clamped issue)
+
+        webster_cycle = float(rec["optimal_cycle_s"])
+        webster_green_ns = float(rec["green_ns_s"])
+        webster_green_ew = float(rec["green_ew_s"])
+
+        if webster_green_ns <= 0 or webster_green_ew <= 0:
+            continue
+
+        # Compute webster's delay from optimal timing
+        try:
+            webster_delays: List[float] = []
+            for approach in ("N", "S", "E", "W"):
+                green = webster_green_ns if approach in ("N", "S") else webster_green_ew
+                delay = websters_delay(
+                    intersection_state=inter,
+                    approach=approach,
+                    cycle_length_s=webster_cycle,
+                    green_s=green,
+                )
+                webster_delays.append(delay)
+            webster_delay_mean = float(np.mean(webster_delays)) if webster_delays else 0.0
+        except ValueError:
+            continue
+
+        # Scoring
+        if webster_delay_mean <= 0:
+            # Theoretical optimal has no delay; skip (no measurable demand)
+            continue
+
+        if user_delay_mean <= 0:
+            # User's timing produces no delay → at least as good as Webster
+            score = 100.0
+        else:
+            score = min(100.0, (webster_delay_mean / user_delay_mean) * 100.0)
+
+        intersection_scores[intersection_id] = score
+        details[intersection_id] = {
+            "user_delay_s": user_delay_mean,
+            "webster_delay_s": webster_delay_mean,
+            "user_cycle_s": user_cycle,
+            "user_green_ns_s": user_green_ns,
+            "user_green_ew_s": user_green_ew,
+            "webster_cycle_s": webster_cycle,
+            "webster_green_ns_s": webster_green_ns,
+            "webster_green_ew_s": webster_green_ew,
+        }
+
+    # Network-level score is average of per-intersection scores
+    if intersection_scores:
+        network_score = float(np.mean(list(intersection_scores.values())))
+    else:
+        network_score = 0.0
+
+    # Rating and color based on network score
+    if network_score >= 90:
+        rating = "Traffic Engineer"
+        color = (0, 200, 0)
+    elif network_score >= 75:
+        rating = "Well Timed"
+        color = (100, 220, 0)
+    elif network_score >= 60:
+        rating = "Acceptable"
+        color = (200, 200, 0)
+    elif network_score >= 40:
+        rating = "Needs Work"
+        color = (255, 150, 0)
+    else:
+        rating = "Gridlock"
+        color = (255, 60, 60)
+
+    return {
+        "network_score": network_score,
+        "intersection_scores": intersection_scores,
+        "rating": rating,
+        "color": color,
+        "details": details,
+    }
