@@ -139,7 +139,7 @@ metric collection over the rolling window for live LOS readouts.
 
 ## Team
 
-CAEE Hackathon, April 17–19, 2026. Built by Ifratul Hoque, Adeeba Naz, Jahin Labiba Chowdhury, and Shantanu Paul.
+University of Texas at Austin Spring 2026 CAEE Hackathon, April 17–19, 2026. Built by Ifratul Hoque, Adeeba Naz, Jahin Labiba Chowdhury, and Shantanu Paul.
 
 ## License
 
