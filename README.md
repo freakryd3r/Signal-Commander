@@ -7,7 +7,7 @@ evaluate intersection performance with standard traffic-engineering metrics.
 Built for the University of Texas at Austin Spring 2026 CAEE Hackathon (April 17–19, 2026).
 
 # =============================================================
-# SIGNAL LORD — UNIT CONVENTIONS
+# SIGNAL Commander — UNIT CONVENTIONS
 # =============================================================
 # Distance:  meters (m)
 # Time:      seconds (s)
