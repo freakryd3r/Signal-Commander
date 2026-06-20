@@ -168,12 +168,12 @@ additional preset scenarios, transit priority for buses, and a save/load for net
 ## Team
 
 Built at the University of Texas at Austin Spring 2026 CAEE Hackathon (April 17–19, 2026), where it won First Prize
-Contributions
+**Contributions**
 
-Ifratul Hoque: Team lead and concept designer. Defined the overall concept and system design, and built the traffic microsimulation engine (simulation.py), including the car-following agent model, the six-phase signal state machine, and origin-destination demand spawning and stepping.
-Adeeba Naz: Network model and grid geometry (network.py) and the application user interface (main.py).
-Jahin Labiba Chowdhury: Performance metrics and scoring calculations (metrics.py).
-Shantanu Paul: Consistency checks, validation, and coding support across the codebase.
+- **Ifratul Hoque:** Team lead and concept designer. Defined the overall concept and system design, and built the traffic microsimulation engine (`simulation.py`), including the car-following agent model, the six-phase signal state machine, and origin-destination demand spawning and stepping.
+- **Adeeba Naz:** Network model and grid geometry (`network.py`) and the application user interface (`main.py`).
+- **Jahin Labiba Chowdhury:** Performance metrics and scoring calculations (`metrics.py`).
+- **Shantanu Paul:** Consistency checks, validation, and coding support across the codebase.
 
 ## License
 
