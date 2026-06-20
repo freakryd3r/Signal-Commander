@@ -8,9 +8,10 @@ Built for the University of Texas at Austin Spring 2026 CAEE Hackathon (April 17
 
 ## How it plays
 
-You are handed a grid of signalized intersections with real traffic demand. Set
-each signal's cycle length and green splits, press Start, and watch vehicles move,
-queue, and clear. When the run finishes, the network is scored from 0 to 100
+You start with a grid of signalized intersections carrying real traffic demand, and
+you can edit it freely: build your own grid, adjust intersections, links, and inflows,
+then tune each signal's cycle length and green splits. Press Start, and watch vehicles
+move, queue, and clear. When the run finishes, the network is scored from 0 to 100
 against Webster-optimal timing for the demand it measured, with a rating from
 "Gridlock" up to "Traffic Engineer." Retune and try again to beat your score.
 
