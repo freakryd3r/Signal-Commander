@@ -158,10 +158,6 @@ Key constants live in `config.py`:
   free-flow speed.
 - Simulation: `TIMESTEP` 1.0 s, `WARMUP_DURATION` 180 s, `ROLLING_WINDOW` 300 s.
 
-Note: a few constants (`DEFAULT_LINK_LENGTH_M`, `FREE_FLOW_SPEED`) are defined twice in
-`config.py`; the later definition wins (link length 100 m, free-flow speed 15 m/s). Worth
-collapsing to a single source of truth. Also note the run length used by the engine is
-3600 s (set in `simulation.py`), which differs from `SIM_DURATION` in `config.py`.
 
 ## Status and ideas
 
@@ -171,8 +167,13 @@ additional preset scenarios, transit priority for buses, and a save/load for net
 
 ## Team
 
-University of Texas at Austin Spring 2026 CAEE Hackathon, April 17–19, 2026. Built by
-Ifratul Hoque, Adeeba Naz, Jahin Labiba Chowdhury, and Shantanu Paul.
+Built at the University of Texas at Austin Spring 2026 CAEE Hackathon (April 17–19, 2026), where it won First Prize
+Contributions
+
+Ifratul Hoque: Team lead and concept designer. Defined the overall concept and system design, and built the traffic microsimulation engine (simulation.py), including the car-following agent model, the six-phase signal state machine, and origin-destination demand spawning and stepping.
+Adeeba Naz: Network model and grid geometry (network.py) and the application user interface (main.py).
+Jahin Labiba Chowdhury: Performance metrics and scoring calculations (metrics.py).
+Shantanu Paul: Consistency checks, validation, and coding support across the codebase.
 
 ## License
 
