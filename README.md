@@ -143,4 +143,4 @@ University of Texas at Austin Spring 2026 CAEE Hackathon, April 17–19, 2026. B
 
 ## License
 
-[Add a license if you intend to share this publicly, e.g. MIT.]
+This project is released under the MIT License. See the LICENSE file for details.
