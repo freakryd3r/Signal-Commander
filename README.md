@@ -6,21 +6,20 @@ evaluate intersection performance with standard traffic-engineering metrics.
 
 Built for the University of Texas at Austin Spring 2026 CAEE Hackathon (April 17–19, 2026).
 
-=============================================================
-SIGNAL Commander — UNIT CONVENTIONS
-=============================================================
-Distance:  meters (m)
-Time:      seconds (s)
-Speed:     meters per second (m/s)
-Flow:      vehicles per hour (veh/hr)
-Density:   vehicles per kilometer (veh/km)
-Angles:    radians internally, degrees only at display
+## Unit conventions
 
-World space: meters, used for all simulation logic.
-Screen space: pixels, used only for rendering.
+Distance: meters (m)<br>
+Time: seconds (s)<br>
+Speed: meters per second (m/s)<br>
+Flow: vehicles per hour (veh/hr)<br>
+Density: vehicles per kilometer (veh/km)<br>
+Angles: radians internally, degrees only at display
+
+World space: meters, used for all simulation logic.<br>
+Screen space: pixels, used only for rendering.<br>
 Convert with world_to_screen() and screen_to_world() helpers.
+
 DO NOT mix units. Convert at display time only.
-=============================================================
 
 ## Overview
 
