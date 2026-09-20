@@ -9,7 +9,7 @@ from metrics import MetricsEngine, websters_optimal_cycle_simple, compute_networ
 from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, SIDEBAR_WIDTH, CANVAS_WIDTH,
     CANVAS_HEIGHT, FPS, BG_COLOR, GRID_BG, LINK_COLOR,
-    INTERSECTION_COLOR, DEFAULT_LINK_LENGTH_M
+    INTERSECTION_COLOR, DEFAULT_LINK_LENGTH_M, INTERGREEN_S
 )
 from network import Network
 
@@ -396,24 +396,26 @@ def main():
         nonlocal current_mode
         current_mode = "intersection"
 
-        object_type_label.set_text("Type: Intersection")
+        object_type_label.set_text(
+            f"Type: Intersection  (Cycle auto: {int(inter.cycle_length)} s)"
+        )
 
-        field1_label.set_text("Cycle")
-        field2_label.set_text("Green NS")
-        field3_label.set_text("Green EW")
-        field4_label.set_text("Offset")
+        field1_label.set_text("Green NS")
+        field2_label.set_text("Green EW")
+        field3_label.set_text("Offset")
+        field4_label.set_text("")
 
-        field1_input.set_text(str(inter.cycle_length))
-        field2_input.set_text(str(inter.green_ns))
-        field3_input.set_text(str(inter.green_ew))
-        field4_input.set_text(str(inter.offset))
+        field1_input.set_text(str(inter.green_ns))
+        field2_input.set_text(str(inter.green_ew))
+        field3_input.set_text(str(inter.offset))
+        field4_input.set_text("")
 
         field2_label.show()
         field2_input.show()
         field3_label.show()
         field3_input.show()
-        field4_label.show()
-        field4_input.show()
+        field4_label.hide()
+        field4_input.hide()
 
         status_label.set_text("")
 
@@ -719,38 +721,34 @@ def main():
                     if sim is not None and sim.state.sim_running:
                         status_label.set_text("Pause or reset to edit")
                     elif current_mode == "intersection" and selected_intersection is not None:
-                        cycle = safe_int(field1_input.get_text(), selected_intersection.cycle_length)
-                        green_ns = safe_int(field2_input.get_text(), selected_intersection.green_ns)
-                        green_ew = safe_int(field3_input.get_text(), selected_intersection.green_ew)
-                        offset = safe_int(field4_input.get_text(), selected_intersection.offset)
+                        green_ns = safe_int(field1_input.get_text(), selected_intersection.green_ns)
+                        green_ew = safe_int(field2_input.get_text(), selected_intersection.green_ew)
+                        offset = safe_int(field3_input.get_text(), selected_intersection.offset)
 
-                        if cycle <= 0:
-                            status_label.set_text("Cycle must be > 0")
-                        elif green_ns < 0 or green_ew < 0:
-                            status_label.set_text("Green times must be >= 0")
-                        elif green_ns + green_ew > cycle:
-                            status_label.set_text("Green NS + Green EW > cycle")
-                        elif offset < 0 or offset >= cycle:
-                            status_label.set_text(f"Offset must be 0 to {cycle - 1}")
+                        derived_cycle = green_ns + green_ew + int(INTERGREEN_S)
+                        if green_ns <= 0 or green_ew <= 0:
+                            status_label.set_text("Green times must be > 0")
+                        elif offset < 0 or offset >= derived_cycle:
+                            status_label.set_text(f"Offset must be 0 to {derived_cycle - 1}")
                         else:
                             network.update_signal(
                                 selected_intersection.id,
-                                cycle=cycle,
                                 green_ns=green_ns,
                                 green_ew=green_ew,
                             )
                             selected_intersection.offset = offset
 
-                            # Sync IntersectionState so simulation and metrics see the change
+                            # Sync IntersectionState so simulation and metrics see the change.
+                            # cycle_length_s is always the derived value.
                             if sim is not None:
                                 istate = sim.state.intersections.get(selected_intersection.id)
                                 if istate is not None:
-                                    istate.cycle_length_s = float(cycle)
                                     istate.green_ns_s = float(green_ns)
                                     istate.green_ew_s = float(green_ew)
+                                    istate.cycle_length_s = float(derived_cycle)
 
                             load_intersection_fields(selected_intersection)
-                            status_label.set_text("Intersection updated")
+                            status_label.set_text(f"Intersection updated (cycle {derived_cycle} s)")
 
                     elif current_mode == "link" and selected_link is not None:
                         length_m = safe_int(field1_input.get_text(), int(selected_link.length_m))

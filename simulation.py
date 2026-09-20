@@ -53,6 +53,9 @@ import numpy as np
 from config import (
     FREE_FLOW_SPEED,
     WARMUP_DURATION,
+    YELLOW_S,
+    ALL_RED_S,
+    INTERGREEN_S,
 )
 
 # -----------------------------------------------------------------
@@ -62,10 +65,10 @@ CAR_LENGTH_M = 5.0
 BUS_LENGTH_M = 12.0
 MIN_GAP_AT_REST_M = 2.0        # used in Phase 3 car-following
 HEADWAY_TIME_S = 1.5           # used in Phase 3 car-following
-# Signal phase order + default durations (per-intersection overrides live on
-# the Intersection object: cycle_length, green_ns, green_ew).
-YELLOW_DURATION_S = 3.0
-ALL_RED_DURATION_S = 2.0
+# Signal phase durations. Per-intersection overrides live on the Intersection
+# object: green_ns, green_ew. cycle_length is derived (greens + INTERGREEN_S).
+YELLOW_DURATION_S = YELLOW_S
+ALL_RED_DURATION_S = ALL_RED_S
 # Position of the stop line on each approach link, measured upstream of
 # the intersection center. Agents decelerate to stop here on red.
 STOP_LINE_OFFSET_M = 5.0
@@ -171,8 +174,8 @@ class IntersectionState:
     )
     # Pending timing changes (applied at next NS_GREEN boundary in Phase 4+).
     # metrics.py sets these when user clicks "Apply Webster". simulation.py
-    # swaps them in when the signal cycles back to phase 0.
-    pending_cycle_length_s: Optional[float] = None
+    # swaps them in when the signal cycles back to phase 0. cycle_length is
+    # derived from the greens + INTERGREEN_S so it isn't pended separately.
     pending_green_ns_s: Optional[float] = None
     pending_green_ew_s: Optional[float] = None
 
@@ -389,15 +392,11 @@ class Signal:
 
     def _apply_pending_timing(self, istate, sim_time_s):
         """
-        Swap in any queued cycle_length / green_ns / green_ew from the
-        IntersectionState. Called only at the NS_GREEN boundary so the
-        signal never stutters mid-cycle.
+        Swap in any queued green_ns / green_ew from the IntersectionState.
+        Called only at the NS_GREEN boundary so the signal never stutters
+        mid-cycle. cycle_length_s is always derived from the greens so it
+        can't drift from what the state machine actually plays.
         """
-        if istate.pending_cycle_length_s is not None:
-            self.intersection.cycle_length = istate.pending_cycle_length_s
-            istate.cycle_length_s = istate.pending_cycle_length_s
-            istate.pending_cycle_length_s = None
-
         if istate.pending_green_ns_s is not None:
             self.intersection.green_ns = istate.pending_green_ns_s
             istate.green_ns_s = istate.pending_green_ns_s
@@ -407,6 +406,8 @@ class Signal:
             self.intersection.green_ew = istate.pending_green_ew_s
             istate.green_ew_s = istate.pending_green_ew_s
             istate.pending_green_ew_s = None
+
+        istate.cycle_length_s = istate.green_ns_s + istate.green_ew_s + INTERGREEN_S
 
     def step(self, dt, sim_time_s, istate):
         """
@@ -517,7 +518,7 @@ class Simulation:
             self.signals[inter.id] = Signal(inter)
             self.state.intersections[inter.id] = IntersectionState(
                 intersection_id=inter.id,
-                cycle_length_s=float(inter.cycle_length),
+                cycle_length_s=float(inter.green_ns + inter.green_ew + INTERGREEN_S),
                 green_ns_s=float(inter.green_ns),
                 green_ew_s=float(inter.green_ew),
             )

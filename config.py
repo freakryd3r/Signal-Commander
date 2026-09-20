@@ -35,3 +35,10 @@ TIMESTEP = 1.0
 SIM_DURATION = 900
 WARMUP_DURATION = 180
 ROLLING_WINDOW = 300
+
+# Signal intergreen — must match the Signal state machine in simulation.py.
+# Cycle length is derived as green_ns + green_ew + INTERGREEN_S, so scoring
+# and the played state machine always see the same number.
+YELLOW_S = 3.0
+ALL_RED_S = 2.0
+INTERGREEN_S = 2 * YELLOW_S + 2 * ALL_RED_S

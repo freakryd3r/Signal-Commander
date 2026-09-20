@@ -1,6 +1,6 @@
 import math
 import networkx as nx
-from config import DEFAULT_LANES
+from config import DEFAULT_LANES, INTERGREEN_S
 
 
 class Intersection:
@@ -26,13 +26,22 @@ class Intersection:
         # Simulation-related placeholder
         self.spawn_rate = 0
 
-        # Signal settings for real intersections
-        self.cycle_length = 60
+        # Signal settings for real intersections. cycle_length is derived from
+        # the greens plus fixed intergreen — see the cycle_length property below.
         self.green_ns = 30
         self.green_ew = 30
         self.offset = 0
         self.yellow_time = 4
         self.all_red_time = 1
+
+    @property
+    def cycle_length(self):
+        """Total cycle length in seconds: greens + fixed intergreen.
+
+        This is the value the Signal state machine actually plays, so scoring
+        and delay math read the same number the sim ran with.
+        """
+        return self.green_ns + self.green_ew + INTERGREEN_S
 
     def get_position(self):
         return self.x_m, self.y_m
@@ -544,11 +553,9 @@ class Network:
                 link.lanes = lanes
                 break
 
-    def update_signal(self, inter_id, cycle=None, green_ns=None, green_ew=None):
+    def update_signal(self, inter_id, green_ns=None, green_ew=None):
         for inter in self.intersections:
             if inter.id == inter_id:
-                if cycle is not None:
-                    inter.cycle_length = cycle
                 if green_ns is not None:
                     inter.green_ns = green_ns
                 if green_ew is not None:

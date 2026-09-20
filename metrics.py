@@ -1353,8 +1353,11 @@ def compute_network_score(
          applied to the measured last_cycle_flows.
       2. Compute Webster-optimal signal timing from the same flows.
       3. Compute webster_delay using that optimal timing.
-      4. Score = min(100, (webster_delay / user_delay) * 100)
-         - If user_delay == 0, score = 100 (user's timing has no delay)
+      4. r = webster_delay / user_delay; score = min(110, 100 * r**3).
+         The cubic sharpens the curve near r = 1 so near-optimal timing
+         still needs work to reach 90+, and the 110 cap leaves a visible
+         "beat Webster" band instead of clipping at 100.
+         - If user_delay == 0, score = 110 (user's timing has no delay).
          - If webster_delay is unavailable, intersection is excluded.
 
     Returns a dict with:
@@ -1436,10 +1439,12 @@ def compute_network_score(
             continue
 
         if user_delay_mean <= 0:
-            # User's timing produces no delay → at least as good as Webster
-            score = 100.0
+            # User's timing produces no delay → at least as good as Webster;
+            # sit at the top of the beat-Webster band.
+            score = 110.0
         else:
-            score = min(100.0, (webster_delay_mean / user_delay_mean) * 100.0)
+            ratio = webster_delay_mean / user_delay_mean
+            score = min(110.0, 100.0 * (ratio ** 3))
 
         intersection_scores[intersection_id] = score
         details[intersection_id] = {
