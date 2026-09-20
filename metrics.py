@@ -316,12 +316,17 @@ def percentile_travel_time(completed_trips: List[Dict[str, Any]], p: float = 85.
 
 def has_valid_last_cycle_flows(intersection_state: Any) -> bool:
     """
-    Return True if at least one last-cycle flow is available.
+    Return True if at least one last-cycle flow is available and no flow is
+    negative. Negative values would be nonsensical departure rates and are
+    treated as invalid state rather than silently accepted.
 
     Webster-based calculations should not run before the first full
     signal cycle completes.
     """
-    return any(flow > 0 for flow in intersection_state.last_cycle_flows.values())
+    flows = intersection_state.last_cycle_flows.values()
+    if any(flow < 0 for flow in flows):
+        return False
+    return any(flow > 0 for flow in flows)
 
 
 # =============================================================================
@@ -519,31 +524,34 @@ def split_total_flow_by_percentages(
 def lookup_unprotected_left_equivalence_factor(opposing_lanes: int, q0_c_over_g: float) -> float:
     """
     Lookup eL for an unprotected left turn using the table logic discussed.
+
+    Above the highest tabulated q0*C/G bin for a given opposing-lane count we
+    clamp to the last bin's factor rather than raising. Oversaturation is a
+    real operating regime for a mistuned signal — raising here caused entire
+    intersections to drop out of scoring and LOS, which was worse than a
+    slightly extrapolated eL.
     """
     if q0_c_over_g <= 0:
         raise ValueError("q0_c_over_g must be positive for unprotected left lookup.")
 
     if opposing_lanes == 1:
-        if 0 < q0_c_over_g < 1000:
+        if q0_c_over_g < 1000:
             return 1.6
-        if 1000 <= q0_c_over_g < 1350:
-            return 2.9
+        return 2.9  # clamp: 1000 <= q0_c_over_g (was 1000..1350 only)
 
-    elif opposing_lanes == 2:
-        if 0 < q0_c_over_g < 1000:
+    if opposing_lanes == 2:
+        if q0_c_over_g < 1000:
             return 2.0
-        if 1000 <= q0_c_over_g < 1350:
+        if q0_c_over_g < 1350:
             return 2.8
-        if 1350 <= q0_c_over_g < 2000:
-            return 6.0
+        return 6.0  # clamp: 1350 <= q0_c_over_g (was 1350..2000 only)
 
-    elif opposing_lanes == 3:
-        if 0 < q0_c_over_g < 1000:
+    if opposing_lanes == 3:
+        if q0_c_over_g < 1000:
             return 2.2
-        if 1000 <= q0_c_over_g < 1350:
+        if q0_c_over_g < 1350:
             return 3.4
-        if 1350 <= q0_c_over_g < 2400:
-            return 8.9
+        return 8.9  # clamp: 1350 <= q0_c_over_g (was 1350..2400 only)
 
     raise ValueError(
         f"No valid unprotected-left eL found for opposing_lanes={opposing_lanes}, "
@@ -1087,15 +1095,14 @@ class MetricsEngine:
                 cycle_length_s = float(timing["cycle_length_s"])
                 green_ns_s = float(timing["green_ns_s"])
                 green_ew_s = float(timing["green_ew_s"])
-                used_placeholder_timing = False
             else:
                 cycle_length_s = float(inter.cycle_length_s)
                 green_ns_s = float(inter.green_ns_s)
                 green_ew_s = float(inter.green_ew_s)
-                used_placeholder_timing = False
 
             delays: List[float] = []
             approach_delays: Dict[str, Any] = {}
+            failed_approaches = 0
 
             for approach in ("N", "S", "E", "W"):
                 green_s = green_ns_s if approach in ("N", "S") else green_ew_s
@@ -1109,9 +1116,22 @@ class MetricsEngine:
                     delays.append(delay_s)
                     approach_delays[approach] = delay_s
                 except ValueError:
+                    # Webster is inapplicable (e.g. capacity ~ 0, denominator
+                    # non-positive). Use a penalty so a failing approach still
+                    # contributes to the mean rather than silently dropping —
+                    # otherwise the worst approach would systematically vanish
+                    # from the intersection's mean_delay.
+                    penalty_s = 300.0
+                    delays.append(penalty_s)
                     approach_delays[approach] = None
+                    failed_approaches += 1
 
-            mean_delay_s = float(np.mean(delays)) if delays else 0.0
+            if failed_approaches == 4:
+                # Every approach failed. Trust the failure signal and report
+                # LOS F rather than the mean=0 → LOS A fallthrough.
+                mean_delay_s = 300.0
+            else:
+                mean_delay_s = float(np.mean(delays)) if delays else 0.0
 
             # Instantaneous queue (displayed in metrics panel)
             total_queue = sum(inter.queue_lengths.values())
@@ -1151,7 +1171,6 @@ class MetricsEngine:
                 "max_queue_approach": max_queue_approach,
                 "max_queue_veh": max_queue_value,
                 "approach_delay_sec_per_veh": approach_delays,
-                "used_placeholder_timing": used_placeholder_timing,
                 "cycle_length_s": cycle_length_s,
                 "green_ns_s": green_ns_s,
                 "green_ew_s": green_ew_s,
@@ -1361,8 +1380,9 @@ def compute_network_score(
          - If webster_delay is unavailable, intersection is excluded.
 
     Returns a dict with:
-        network_score: 0-100, average of per-intersection scores
-        intersection_scores: dict mapping intersection_id -> score (0-100)
+        network_score: 0-110, average of per-intersection scores. Values
+            above 100 mean the network beat Webster on average.
+        intersection_scores: dict mapping intersection_id -> score (0-110)
         rating: text label for the network score
         color: RGB tuple for the network score color
         details: dict with raw user_delay and webster_delay per intersection
@@ -1383,21 +1403,24 @@ def compute_network_score(
         if user_cycle <= 0 or user_green_ns <= 0 or user_green_ew <= 0:
             continue
 
-        # Compute user's delay from their timing
-        try:
-            user_delays: List[float] = []
-            for approach in ("N", "S", "E", "W"):
-                green = user_green_ns if approach in ("N", "S") else user_green_ew
+        # Compute user's delay from their timing. Use per-approach try/except
+        # with a saturation penalty on failure so one bad approach doesn't
+        # silently drop the whole intersection from scoring.
+        WEBSTER_FAIL_PENALTY_S = 300.0
+        user_delays: List[float] = []
+        for approach in ("N", "S", "E", "W"):
+            green = user_green_ns if approach in ("N", "S") else user_green_ew
+            try:
                 delay = websters_delay(
                     intersection_state=inter,
                     approach=approach,
                     cycle_length_s=user_cycle,
                     green_s=green,
                 )
-                user_delays.append(delay)
-            user_delay_mean = float(np.mean(user_delays)) if user_delays else 0.0
-        except ValueError:
-            continue  # Can't score if delay calc fails
+            except ValueError:
+                delay = WEBSTER_FAIL_PENALTY_S
+            user_delays.append(delay)
+        user_delay_mean = float(np.mean(user_delays))
 
         # Compute Webster-optimal timing from flows
         try:
@@ -1408,7 +1431,7 @@ def compute_network_score(
                 startup_lost_per_phase_s=startup_lost_per_phase_s,
             )
         except ValueError:
-            continue  # Webster failed (e.g., Y clamped issue)
+            continue  # Webster recommendation itself failed — nothing to compare against
 
         webster_cycle = float(rec["optimal_cycle_s"])
         webster_green_ns = float(rec["green_ns_s"])
@@ -1417,21 +1440,21 @@ def compute_network_score(
         if webster_green_ns <= 0 or webster_green_ew <= 0:
             continue
 
-        # Compute webster's delay from optimal timing
-        try:
-            webster_delays: List[float] = []
-            for approach in ("N", "S", "E", "W"):
-                green = webster_green_ns if approach in ("N", "S") else webster_green_ew
+        # Compute webster's delay from optimal timing, same per-approach fallback.
+        webster_delays: List[float] = []
+        for approach in ("N", "S", "E", "W"):
+            green = webster_green_ns if approach in ("N", "S") else webster_green_ew
+            try:
                 delay = websters_delay(
                     intersection_state=inter,
                     approach=approach,
                     cycle_length_s=webster_cycle,
                     green_s=green,
                 )
-                webster_delays.append(delay)
-            webster_delay_mean = float(np.mean(webster_delays)) if webster_delays else 0.0
-        except ValueError:
-            continue
+            except ValueError:
+                delay = WEBSTER_FAIL_PENALTY_S
+            webster_delays.append(delay)
+        webster_delay_mean = float(np.mean(webster_delays))
 
         # Scoring
         if webster_delay_mean <= 0:

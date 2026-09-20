@@ -247,9 +247,25 @@ class Agent:
         self.spawn_time_s = spawn_time_s
         self.completion_time_s: Optional[float] = None
 
-        # Origin/destination node IDs for trip records
-        self.origin_id = route[0].from_int.id if route else None
-        self.dest_id = route[-1].to_int.id if route else None
+        # Origin/destination as perimeter intersection IDs (not terminal
+        # node IDs). Routes built by Simulation._try_spawn_od look like
+        # [inbound_terminal_link, ...interior..., outbound_terminal_link],
+        # so we step past the terminal links at both ends to expose
+        # I_r_c IDs to downstream consumers (trip records, CSV, debug).
+        if route:
+            first_non_terminal = next(
+                (lnk for lnk in route if not lnk.is_terminal_link),
+                route[0],
+            )
+            last_non_terminal = next(
+                (lnk for lnk in reversed(route) if not lnk.is_terminal_link),
+                route[-1],
+            )
+            self.origin_id = first_non_terminal.from_int.id
+            self.dest_id = last_non_terminal.to_int.id
+        else:
+            self.origin_id = None
+            self.dest_id = None
 
         # Initialize world position from route[0] start
         self._update_world_position()
@@ -416,42 +432,51 @@ class Signal:
         If still within the pre-start offset period, accumulate time and
         show all-red until offset elapses. Then start the normal cycle.
         """
-        # Pre-start gate: hold at all-red until offset is reached
+        # Pre-start gate: hold at all-red until offset is reached. If the
+        # offset elapses mid-tick, carry the leftover time into NS_GREEN
+        # rather than swallowing it.
         if self.waiting_for_offset:
             self.time_in_phase_s += dt
             if self.time_in_phase_s >= self.intersection.offset:
-                # Offset elapsed — enter first phase (NS_GREEN) and reset
+                leftover_after_offset = self.time_in_phase_s - self.intersection.offset
                 self.waiting_for_offset = False
                 self.phase_idx = 0
                 self.current_phase = PHASE_SEQUENCE[0]
-                self.time_in_phase_s = 0.0
-                self.cycle_start_time_s = sim_time_s
-                # Mirror to state
+                self.time_in_phase_s = leftover_after_offset
+                self.cycle_start_time_s = sim_time_s - leftover_after_offset
                 istate.current_phase = self.current_phase
-                istate.time_in_phase_s = 0.0
+                istate.time_in_phase_s = self.time_in_phase_s
                 istate.cycle_start_time_s = self.cycle_start_time_s
+                # Fall through to the transition loop below so a large
+                # leftover can cascade past NS_GREEN too.
             else:
                 # Display as all-red during pre-start (so metrics.py sees a
                 # red-like state; agents don't discharge through it)
                 istate.current_phase = "ALL_RED_1"
                 istate.time_in_phase_s = self.time_in_phase_s
-            return
+                return
+        else:
+            self.time_in_phase_s += dt
 
-        self.time_in_phase_s += dt
+        # Cascade transitions: a single tick can span multiple phases at
+        # high speed multipliers or on short greens. Carry the excess into
+        # the following phase(s) instead of dropping it.
+        while True:
+            duration = self._phase_duration()
+            if self.time_in_phase_s < duration:
+                return
+            overrun = self.time_in_phase_s - duration
+            self.phase_idx = (self.phase_idx + 1) % len(PHASE_SEQUENCE)
+            self.current_phase = PHASE_SEQUENCE[self.phase_idx]
+            self.time_in_phase_s = overrun
 
-        duration = self._phase_duration()
-        if self.time_in_phase_s < duration:
-            return
-
-        # Time to transition
-        self.phase_idx = (self.phase_idx + 1) % len(PHASE_SEQUENCE)
-        self.current_phase = PHASE_SEQUENCE[self.phase_idx]
-        self.time_in_phase_s = 0.0
-
-        if self.current_phase == "NS_GREEN":
-            self._snapshot_cycle_flows(istate, sim_time_s)
-            self.cycle_start_time_s = sim_time_s
-            self._apply_pending_timing(istate, sim_time_s)
+            if self.current_phase == "NS_GREEN":
+                # Boundary is (sim_time_s - overrun); the phase just started
+                # `overrun` seconds ago in continuous time.
+                boundary_time_s = sim_time_s - overrun
+                self._snapshot_cycle_flows(istate, boundary_time_s)
+                self.cycle_start_time_s = boundary_time_s
+                self._apply_pending_timing(istate, boundary_time_s)
 
     def is_green_for(self, approach):
         if self.waiting_for_offset:
@@ -559,10 +584,17 @@ class Simulation:
         self.speed_multiplier = max(1, int(multiplier))
 
     def reset_simulation(self):
-        """Clear all dynamic state; keep network config intact."""
+        """Clear all dynamic state; keep network config intact.
+
+        Note: od_matrix and demand_scale are treated as scenario config
+        (loaded via set_od_matrix / set_demand_scale) and are preserved
+        across a reset. speed_multiplier is a user-facing runtime setting
+        and IS reset to 1.
+        """
         self.agents.clear()
         self._next_agent_id = 0
         self._scheduled_spawns.clear()
+        self.speed_multiplier = 1
 
         self.state.time_s = 0.0
         self.state.sim_running = False
@@ -786,9 +818,13 @@ class Simulation:
 
             dest_ids = list(dests.keys())
             weights = np.array([dests[d] for d in dest_ids], dtype=float)
-            if weights.sum() <= 0:
+            # Guard both all-zero and any-NaN — NaN slips past `sum() <= 0`
+            # (NaN comparisons are always False) and would poison the
+            # normalized weights, then rng.choice raises mid-step.
+            total = weights.sum()
+            if not np.isfinite(total) or total <= 0:
                 continue
-            weights /= weights.sum()
+            weights = weights / total
             dest_id = self.rng.choice(dest_ids, p=weights)
 
             interior = self.network.shortest_path(origin_id, dest_id, self.rng)
@@ -932,10 +968,19 @@ class Simulation:
         self.state.time_s += dt
         self.state.warmup_complete = self.state.time_s >= WARMUP_DURATION
 
-        # Check completion AFTER advancing time so the final step runs
+        # Check completion AFTER advancing time so the final step runs.
+        # Also clear per-step counters here — otherwise MetricsEngine would
+        # keep re-consuming the previous tick's contents on every update
+        # after completion, double-counting the final second forever.
         if self.state.time_s >= SIM_DURATION_S:
             self.state.sim_completed = True
             self.state.sim_running = False
+            self.state.completed_trips_this_step.clear()
+            self.state.denied_entries_this_step = 0
+            for istate in self.state.intersections.values():
+                for d in ("N", "S", "E", "W"):
+                    istate.arrivals_this_step[d] = 0
+                    istate.departures_this_step[d] = 0
             return
 
         # 1. Reset per-step counters

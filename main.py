@@ -162,13 +162,12 @@ def main():
 
     # Pre-create fonts once — SysFont per frame allocates a new font object
     # every tick, which is wasteful. All render loops below reuse these.
+    # SysFont silently falls back to the platform default when a requested
+    # family isn't installed — it doesn't raise — so no try/except needed.
     los_font = pygame.font.SysFont("Arial", 18, bold=True)
-    try:
-        header_title_font = pygame.font.SysFont("Impact", 32, bold=False)
-    except Exception:
-        header_title_font = pygame.font.SysFont("Arial", 32, bold=False)
+    header_title_font = pygame.font.SysFont("Impact,Arial", 32, bold=False)
     overlay_title_font = pygame.font.SysFont("Arial", 22, bold=False)
-    overlay_score_font = pygame.font.SysFont("Impact", 58, bold=False)
+    overlay_score_font = pygame.font.SysFont("Impact,Arial", 58, bold=False)
     overlay_rating_font = pygame.font.SysFont("Arial", 22, bold=False)
     overlay_small_font = pygame.font.SysFont("Arial", 14)
     overlay_grid_font = pygame.font.SysFont("Arial", 14)
@@ -186,7 +185,7 @@ def main():
     heatmap_enabled = False
 
     METRICS_UPDATE_INTERVAL_S = 10.0
-    last_metrics_update_s = -1.0
+    last_metrics_update_s = -1e9
     cached_net_metrics = None
     cached_intersection_metrics = {}
 
@@ -233,14 +232,16 @@ def main():
         manager=manager
     )
 
-    # Info + type labels (centered)
+    # Info + type labels. Widths fit within SIDEBAR_WIDTH so text doesn't
+    # overflow off the display right edge or spill into the canvas.
+    LABEL_W = SIDEBAR_WIDTH - 20
     info_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH), 235), (SIDEBAR_WIDTH + 80, 24)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 235), (LABEL_W, 24)),
         text="Click an intersection or link",
         manager=manager
     )
     object_type_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH), 265), (SIDEBAR_WIDTH +80, 24)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 265), (LABEL_W, 24)),
         text="Type: None",
         manager=manager
     )
@@ -291,65 +292,69 @@ def main():
     )
 
     apply_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((center_x(85), 440), (200, 32)),
+        relative_rect=pygame.Rect((center_x(200), 440), (200, 32)),
         text="Apply",
         manager=manager
     )
 
     status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH), 480), (SIDEBAR_WIDTH + 80, 24)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 480), (LABEL_W, 24)),
         text="",
         manager=manager
     )
 
-    # Speed buttons (1x / 5x / 20x / 60x) — 4 buttons in a row, centered
-    # Each 70px wide, 10px gap → total width 310
-    fast_row_total = 4 * 70 + 3 * 10  # 310
+    # Speed buttons (1x / 5x / 20x / 60x) — 4 buttons in a row, centered.
+    # Buttons must start at fast_row_left (offset 0), NOT +50, or the whole
+    # row shifts past the sidebar's right edge and buttons are unclickable.
+    # Each button 60px wide, 10px gap → total width 270; fits inside sidebar.
+    button_w = 60
+    fast_row_total = 4 * button_w + 3 * 10  # 270
     fast_row_left = center_x(fast_row_total)
     row_y = 515
     realtime_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((fast_row_left +50, row_y), (70, 32)),
+        relative_rect=pygame.Rect((fast_row_left + 0 * (button_w + 10), row_y), (button_w, 32)),
         text="1x",
         manager=manager
     )
     fast5_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((fast_row_left + 130, row_y), (70, 32)),
+        relative_rect=pygame.Rect((fast_row_left + 1 * (button_w + 10), row_y), (button_w, 32)),
         text="5x",
         manager=manager
     )
     fast20_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((fast_row_left + 210, row_y), (70, 32)),
+        relative_rect=pygame.Rect((fast_row_left + 2 * (button_w + 10), row_y), (button_w, 32)),
         text="20x",
         manager=manager
     )
     fast60_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((fast_row_left + 290, row_y), (70, 32)),
+        relative_rect=pygame.Rect((fast_row_left + 3 * (button_w + 10), row_y), (button_w, 32)),
         text="60x",
         manager=manager
     )
 
-    # Sim control buttons (Start / Pause / Reset) — 3 buttons, centered
-    sim_row_total = 3 * 80 + 2 * 10  # 260
+    # Sim control buttons (Start / Pause / Reset) — 3 buttons, centered.
+    sim_button_w = 80
+    sim_row_total = 3 * sim_button_w + 2 * 10  # 260
     sim_row_left = center_x(sim_row_total)
     row_y = 550
     start_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((sim_row_left+ 50, row_y), (80, 32)),
+        relative_rect=pygame.Rect((sim_row_left + 0 * (sim_button_w + 10), row_y), (sim_button_w, 32)),
         text="Start",
         manager=manager
     )
     pause_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((sim_row_left + 140, row_y), (80, 32)),
+        relative_rect=pygame.Rect((sim_row_left + 1 * (sim_button_w + 10), row_y), (sim_button_w, 32)),
         text="Pause",
         manager=manager
     )
     reset_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((sim_row_left + 230, row_y), (80, 32)),
+        relative_rect=pygame.Rect((sim_row_left + 2 * (sim_button_w + 10), row_y), (sim_button_w, 32)),
         text="Reset",
         manager=manager
     )
 
     sim_status_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH + 50), 585), (SIDEBAR_WIDTH + 150, 24)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 585), (LABEL_W, 24)),
         text=f"PAUSED | t = 0.0s / {int(SIM_DURATION_S)}s | Speed: 1x",
         manager=manager
     )
@@ -357,53 +362,57 @@ def main():
     # Network metrics separator
     # Horizontal separator visual — toggles between network and intersection mode
     metrics_header_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 620), (SIDEBAR_WIDTH + 80, 24)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 620), (LABEL_W, 24)),
         text="— NETWORK METRICS —",
         manager=manager
     )
 
     # Network metrics labels (centered)
     net_completed_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 642), (SIDEBAR_WIDTH + 80, 22)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 642), (LABEL_W, 22)),
         text="Completed trips: 0",
         manager=manager
     )
     net_active_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 664), (SIDEBAR_WIDTH + 80, 22)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 664), (LABEL_W, 22)),
         text="Active vehicles: 0",
         manager=manager
     )
     net_delay_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 686), (SIDEBAR_WIDTH + 80, 22)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 686), (LABEL_W, 22)),
         text="Mean delay: 0.0 s",
         manager=manager
     )
     net_tt_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 708), (SIDEBAR_WIDTH + 80, 22)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 708), (LABEL_W, 22)),
         text="Mean travel time: 0.0 s",
         manager=manager
     )
     net_p85_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 730), (SIDEBAR_WIDTH + 80, 22)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 730), (LABEL_W, 22)),
         text="85th %ile travel: 0.0 s",
         manager=manager
     )
     net_denied_label = pygame_gui.elements.UILabel(
-        relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH - 20), 752), (SIDEBAR_WIDTH + 80, 22)),
+        relative_rect=pygame.Rect((center_x(LABEL_W), 752), (LABEL_W, 22)),
         text="Denied entries: 0",
         manager=manager
     )
 
-    # Heatmap + CSV row (170 + 10 + 80 = 260 wide, centered)
-    heatmap_row_left = center_x(260)
-    row_y = 820
+    # Heatmap + CSV row (170 + 10 + 80 = 260 wide, centered). Moved up
+    # from y=820 so it stays on-screen on any display >= 815 tall. Buttons
+    # start at heatmap_row_left (no phantom +40 offset that would push the
+    # row past the sidebar's right edge).
+    heatmap_row_total = 170 + 10 + 80  # 260
+    heatmap_row_left = center_x(heatmap_row_total)
+    row_y = 785
     heatmap_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((heatmap_row_left + 40, row_y), (170, 30)),
+        relative_rect=pygame.Rect((heatmap_row_left, row_y), (170, 30)),
         text="Heatmap: OFF",
         manager=manager
     )
     csv_export_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((heatmap_row_left + 220, row_y), (80, 30)),
+        relative_rect=pygame.Rect((heatmap_row_left + 180, row_y), (80, 30)),
         text="Export CSV",
         manager=manager
     )
@@ -415,7 +424,10 @@ def main():
     sim_time_accumulator = 0.0
     cached_final_score = None
     is_fullscreen = True
-    windowed_size = (WINDOW_WIDTH, WINDOW_HEIGHT)
+    # 80% of the live display so ESC always restores to something that
+    # actually fits, instead of the config's 1400x1000 fallback which
+    # would exceed a 1280- or 1366-wide laptop screen.
+    windowed_size = (int(info.current_w * 0.8), int(info.current_h * 0.8))
     prev_agent_positions = {}
 
 
@@ -559,6 +571,13 @@ def main():
             if event.type == pygame.VIDEORESIZE:
                 screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
                 windowed_size = (event.w, event.h)  # remember size for fullscreen toggle
+                # Re-anchor the sidebar to the new right edge so the canvas
+                # boundary used by click hit-testing and drawing tracks the
+                # live window. Widget positions are baked in — the canvas
+                # rendering still tracks correctly.
+                SIDEBAR_LEFT = event.w - SIDEBAR_WIDTH
+                SIDEBAR_INPUT_X = SIDEBAR_LEFT + 130
+                SIDEBAR_CENTER = SIDEBAR_LEFT + SIDEBAR_WIDTH // 2
                 if hasattr(manager, 'set_window_resolution'):
                     manager.set_window_resolution((event.w, event.h))
 
@@ -622,7 +641,7 @@ def main():
                         info_label.set_text(f"Intersection: {selected_intersection.id}")
                         load_intersection_fields(selected_intersection)
                         # Trigger immediate metrics refresh on new selection
-                        last_metrics_update_s = -1.0
+                        last_metrics_update_s = -1e9
 
                     elif clicked_terminal_link is not None:
                         info_label.set_text(f"Terminal: {clicked_terminal_link.id}")
@@ -636,7 +655,7 @@ def main():
                         info_label.set_text("Click an intersection, link, or terminal")
                         clear_selection_ui()
                         # Trigger immediate refresh back to network metrics
-                        last_metrics_update_s = -1.0
+                        last_metrics_update_s = -1e9
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
@@ -647,6 +666,7 @@ def main():
                         pygame.display.set_caption("Signal Commander")
                         screen = pygame.display.set_mode(windowed_size, pygame.RESIZABLE)
                         is_fullscreen = False
+                        new_w, new_h = windowed_size
                         if hasattr(manager, 'set_window_resolution'):
                             manager.set_window_resolution(windowed_size)
                     else:
@@ -657,8 +677,15 @@ def main():
                             pygame.FULLSCREEN | pygame.NOFRAME,
                         )
                         is_fullscreen = True
+                        new_w, new_h = info.current_w, info.current_h
                         if hasattr(manager, 'set_window_resolution'):
-                            manager.set_window_resolution((info.current_w, info.current_h))
+                            manager.set_window_resolution((new_w, new_h))
+                    # Recompute the sidebar anchors so canvas boundaries
+                    # (used by click hit-testing and canvas rendering)
+                    # track the new display size. Widget rects are baked in.
+                    SIDEBAR_LEFT = new_w - SIDEBAR_WIDTH
+                    SIDEBAR_INPUT_X = SIDEBAR_LEFT + 130
+                    SIDEBAR_CENTER = SIDEBAR_LEFT + SIDEBAR_WIDTH // 2
 
             if event.type == pygame_gui.UI_BUTTON_PRESSED:
                 if event.ui_element == create_network_button:
@@ -685,7 +712,7 @@ def main():
                     cached_final_score = None
                     selected_intersection = None
                     selected_link = None
-                    last_metrics_update_s = -1.0
+                    last_metrics_update_s = -1e9
                     cached_intersection_metrics = {}
                     info_label.set_text("Network created. Click an intersection or link.")
                     clear_selection_ui()
@@ -714,7 +741,7 @@ def main():
                     cached_final_score = None
                     selected_intersection = None
                     selected_link = None
-                    last_metrics_update_s = -1.0
+                    last_metrics_update_s = -1e9
                     cached_intersection_metrics = {}
                     status_label.set_text("Simulation reset (paused)")
 
@@ -753,7 +780,8 @@ def main():
                             network_path=net_path,
                         )
                         status_label.set_text(
-                            f"CSV saved: {os.path.basename(per_int_path)}"
+                            f"CSV saved: {os.path.basename(per_int_path)}, "
+                            f"{os.path.basename(net_path)}"
                         )
                     except Exception as err:
                         status_label.set_text(f"Export failed: {err}")
@@ -900,14 +928,16 @@ def main():
             sim_time_accumulator += sim.speed_multiplier * dt
             max_steps_per_frame = 500
             steps_taken = 0
-            while sim_time_accumulator >= 1.0 and steps_taken < max_steps_per_frame:
-                # Snapshot BEFORE stepping so we know where each agent was.
-                # This becomes the "from" endpoint of interpolation.
+            # Snapshot BEFORE any of this frame's ticks so interpolation
+            # blends between the start-of-frame state and the current one,
+            # not just between the last two ticks at high speed multipliers.
+            if sim_time_accumulator >= 1.0:
                 prev_agent_positions = {
                     a.id: (a.x_m, a.y_m, a.heading_rad)
                     for a in sim.agents
                     if a.active
                 }
+            while sim_time_accumulator >= 1.0 and steps_taken < max_steps_per_frame:
                 sim.step(1.0)
                 metrics_engine.update(sim.get_state())
                 sim_time_accumulator -= 1.0
@@ -1057,16 +1087,18 @@ def main():
         shadow = header_title_font.render("SIGNAL COMMANDER", True, (30, 30, 35))
         title_surface = header_title_font.render("SIGNAL COMMANDER", True, (240, 200, 60))
 
-        title_x = title_x = SIDEBAR_LEFT + (SIDEBAR_WIDTH - title_surface.get_width()) // 2 + 40
+        # Center in the sidebar rectangle — no +40 offset (which was shoving
+        # the title past the display's right edge on any resolution).
+        title_x = SIDEBAR_LEFT + (SIDEBAR_WIDTH - title_surface.get_width()) // 2
         title_y = 7
 
         screen.blit(shadow, (title_x + 2, title_y + 2))
         screen.blit(title_surface, (title_x, title_y))
 
-        # Decorative underline
+        # Decorative underline: inset 30 px from each sidebar edge.
         underline_y = title_y + title_surface.get_height() + 4
-        underline_x1 = SIDEBAR_LEFT + 30 + 40
-        underline_x2 = SIDEBAR_LEFT + SIDEBAR_WIDTH - 30 + 40
+        underline_x1 = SIDEBAR_LEFT + 30
+        underline_x2 = SIDEBAR_LEFT + SIDEBAR_WIDTH - 30
 
         pygame.draw.line(
             screen,
@@ -1168,9 +1200,9 @@ def main():
             )
             screen.blit(breakdown_label, breakdown_rect)
 
-            # Per-intersection grid — sized to the actual network, not a
-            # hardcoded 3x3. Cell widths shrink to fit larger networks so
-            # the overlay never overflows.
+            # Per-intersection grid — sized to the actual network, and read
+            # from network.intersections (row/col + id) rather than hardcoded
+            # 'I_r_c' strings, so the overlay tracks the real ID convention.
             int_scores = cached_final_score["intersection_scores"]
             rows = network.rows if network is not None else 0
             cols = network.cols if network is not None else 0
@@ -1181,32 +1213,32 @@ def main():
             grid_start_x = overlay_x + (overlay_w - grid_cell_w * max(cols, 1)) // 2
             grid_start_y = overlay_y + 230
 
-            for row in range(rows):
-                for col in range(cols):
-                    iid = f"I_{row}_{col}"
-                    score = int_scores.get(iid)
-                    cell_x = grid_start_x + col * grid_cell_w
-                    cell_y = grid_start_y + row * grid_cell_h
+            intersections = network.intersections if network is not None else []
+            for inter in intersections:
+                iid = inter.id
+                score = int_scores.get(iid)
+                cell_x = grid_start_x + inter.col * grid_cell_w
+                cell_y = grid_start_y + inter.row * grid_cell_h
 
-                    if score is None:
-                        text = f"{iid}: —"
-                        color = (120, 120, 130)
+                if score is None:
+                    text = f"{iid}: —"
+                    color = (120, 120, 130)
+                else:
+                    text = f"{iid}: {int(round(score))}"
+                    # Color-code per-intersection scores too
+                    if score >= 90:
+                        color = (0, 200, 0)
+                    elif score >= 75:
+                        color = (100, 220, 0)
+                    elif score >= 60:
+                        color = (200, 200, 0)
+                    elif score >= 40:
+                        color = (255, 150, 0)
                     else:
-                        text = f"{iid}: {int(round(score))}"
-                        # Color-code per-intersection scores too
-                        if score >= 90:
-                            color = (0, 200, 0)
-                        elif score >= 75:
-                            color = (100, 220, 0)
-                        elif score >= 60:
-                            color = (200, 200, 0)
-                        elif score >= 40:
-                            color = (255, 150, 0)
-                        else:
-                            color = (255, 60, 60)
+                        color = (255, 60, 60)
 
-                    cell_surface = overlay_grid_font.render(text, True, color)
-                    screen.blit(cell_surface, (cell_x, cell_y))
+                cell_surface = overlay_grid_font.render(text, True, color)
+                screen.blit(cell_surface, (cell_x, cell_y))
 
             # Footer: reset instruction
             footer = overlay_small_font.render(

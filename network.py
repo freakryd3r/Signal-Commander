@@ -131,6 +131,16 @@ class Network:
     """
 
     def __init__(self, rows, cols, link_length):
+        # Guard callers that don't pre-clamp (main.py does, but tests /
+        # scenarios / preset builders may not). build_terminals walks
+        # get_intersection(0, c) which would IndexError on an empty grid.
+        if rows < 1 or cols < 1:
+            raise ValueError(
+                f"Network requires rows>=1 and cols>=1; got rows={rows}, cols={cols}"
+            )
+        if link_length <= 0:
+            raise ValueError(f"Network link_length must be positive; got {link_length}")
+
         self.rows = rows
         self.cols = cols
         self.default_link_length = link_length
@@ -445,8 +455,15 @@ class Network:
             old_gap = self.col_x[right_col] - self.col_x[left_col]
             delta = new_length - old_gap
 
+            # Reject shifts that would make col_x non-monotonic — that would
+            # cross intersections through each other and produce negative
+            # internal-link lengths on rebuild.
+            new_col_x = list(self.col_x)
             for c in range(right_col, self.cols):
-                self.col_x[c] += delta
+                new_col_x[c] += delta
+            if any(new_col_x[c + 1] <= new_col_x[c] for c in range(self.cols - 1)):
+                return
+            self.col_x = new_col_x
 
             self.rebuild_geometry()
             return
@@ -458,8 +475,12 @@ class Network:
             old_gap = self.row_y[bottom_row] - self.row_y[top_row]
             delta = new_length - old_gap
 
+            new_row_y = list(self.row_y)
             for r in range(bottom_row, self.rows):
-                self.row_y[r] += delta
+                new_row_y[r] += delta
+            if any(new_row_y[r + 1] <= new_row_y[r] for r in range(self.rows - 1)):
+                return
+            self.row_y = new_row_y
 
             self.rebuild_geometry()
             return
@@ -467,11 +488,18 @@ class Network:
     def update_inflow_vph(self, link_id, new_vph):
         """
         Set the inflow rate for an inbound terminal link.
-        Ignored if the link is not an inbound terminal.
+        Ignored if the link is not an inbound terminal, or if new_vph
+        is not a finite number.
         """
+        try:
+            value = float(new_vph)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(value):
+            return False
         for link in self.terminal_links:
             if link.id == link_id and link.in_or_out == "in":
-                link.inflow_vph = max(0.0, float(new_vph))
+                link.inflow_vph = max(0.0, value)
                 return True
         return False
 
@@ -483,13 +511,23 @@ class Network:
                 break
 
     def update_signal(self, inter_id, green_ns=None, green_ew=None):
+        """
+        Update the greens on an intersection. Non-positive greens are
+        rejected — the Signal state machine would produce zero-duration
+        phases that thrash through the cycle every tick.
+        """
+        if green_ns is not None and green_ns <= 0:
+            return False
+        if green_ew is not None and green_ew <= 0:
+            return False
         for inter in self.intersections:
             if inter.id == inter_id:
                 if green_ns is not None:
                     inter.green_ns = green_ns
                 if green_ew is not None:
                     inter.green_ew = green_ew
-                break
+                return True
+        return False
 
     # =========================================================
     # UI SELECTION HELPERS
@@ -616,7 +654,14 @@ class Network:
         Supports:
         - terminal IDs directly, e.g. "T_IN_LEFT_1" -> "T_OUT_RIGHT_1"
         - perimeter intersection IDs, e.g. "I_1_0" -> "I_1_2"
+
+        Same-origin-same-destination is not routable and returns []. It
+        can only arise from callers that bypass Simulation.set_od_matrix
+        (which strips self-loops); most notably 1x1 grids where every
+        perimeter intersection collapses to a single node.
         """
+        if origin_id == dest_id:
+            return []
 
         # Case 1: both are already graph node IDs (like terminal IDs)
         if origin_id in self.graph.nodes and dest_id in self.graph.nodes:
