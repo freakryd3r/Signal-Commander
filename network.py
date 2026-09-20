@@ -28,11 +28,11 @@ class Intersection:
 
         # Signal settings for real intersections. cycle_length is derived from
         # the greens plus fixed intergreen — see the cycle_length property below.
+        # The Signal state machine in simulation.py is the only implementation;
+        # yellow / all-red durations live there as YELLOW_DURATION_S / ALL_RED_DURATION_S.
         self.green_ns = 30
         self.green_ew = 30
         self.offset = 0
-        self.yellow_time = 4
-        self.all_red_time = 1
 
     @property
     def cycle_length(self):
@@ -45,71 +45,6 @@ class Intersection:
 
     def get_position(self):
         return self.x_m, self.y_m
-    def get_phase_time(self, sim_time_s):
-        cycle = max(self.cycle_length, 1)
-        return (sim_time_s - self.offset) % cycle
-
-    def get_phase_state(self, sim_time_s):
-        """
-        Returns one of:
-        - 'NS_GREEN'
-        - 'NS_YELLOW'
-        - 'ALL_RED_1'
-        - 'EW_GREEN'
-        - 'EW_YELLOW'
-        - 'ALL_RED_2'
-        """
-        t = self.get_phase_time(sim_time_s)
-
-        ns_green_end = self.green_ns
-        ns_yellow_end = ns_green_end + self.yellow_time
-        all_red_1_end = ns_yellow_end + self.all_red_time
-
-        ew_green_end = all_red_1_end + self.green_ew
-        ew_yellow_end = ew_green_end + self.yellow_time
-        all_red_2_end = ew_yellow_end + self.all_red_time
-
-        if t < ns_green_end:
-            return "NS_GREEN"
-        elif t < ns_yellow_end:
-            return "NS_YELLOW"
-        elif t < all_red_1_end:
-            return "ALL_RED_1"
-        elif t < ew_green_end:
-            return "EW_GREEN"
-        elif t < ew_yellow_end:
-            return "EW_YELLOW"
-        else:
-            return "ALL_RED_2"
-        
-    def get_approach_signal(self, sim_time_s, approach):
-        """
-        approach should be one of:
-        'N', 'S', 'E', 'W'
-
-        Returns:
-        'green', 'yellow', or 'red'
-        """
-        approach = approach.upper()
-        phase = self.get_phase_state(sim_time_s)
-
-        if approach in ["N", "S"]:
-            if phase == "NS_GREEN":
-                return "green"
-            elif phase == "NS_YELLOW":
-                return "yellow"
-            else:
-                return "red"
-
-        if approach in ["E", "W"]:
-            if phase == "EW_GREEN":
-                return "green"
-            elif phase == "EW_YELLOW":
-                return "yellow"
-            else:
-                return "red"
-
-        return "red"
 
 
 class Link:
@@ -195,12 +130,6 @@ class Network:
     - get_link_by_id()
     """
 
-    def get_signal_state(self, intersection_id, sim_time_s, approach):
-        inter = self.get_real_intersection_by_id(intersection_id)
-        if inter is None:
-            return None
-        return inter.get_approach_signal(sim_time_s, approach)
-    
     def __init__(self, rows, cols, link_length):
         self.rows = rows
         self.cols = cols

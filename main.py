@@ -19,9 +19,21 @@ TERMINAL_NODE_IN_COLOR = (80, 170, 255)
 TERMINAL_NODE_OUT_COLOR = (255, 140, 140)
 SELECTED_COLOR = (255, 220, 80)
 SIDEBAR_TOP_OFFSET = 85  # pushes sidebar widgets below the SIGNAL COMMANDER title
-SIDEBAR_LEFT = 1400 - SIDEBAR_WIDTH # sidebar anchored 175px left of original CANVAS_WIDTH
-SIDEBAR_INPUT_X = SIDEBAR_LEFT + 130  # where input fields start
-SIDEBAR_CENTER = SIDEBAR_LEFT + SIDEBAR_WIDTH // 2  # vertical centerline x-coordinate
+
+# These are recomputed in main() from the live window width so the sidebar
+# anchors to the right edge of any resolution instead of a hardcoded 1400.
+SIDEBAR_LEFT = WINDOW_WIDTH - SIDEBAR_WIDTH
+SIDEBAR_INPUT_X = SIDEBAR_LEFT + 130
+SIDEBAR_CENTER = SIDEBAR_LEFT + SIDEBAR_WIDTH // 2
+
+# Click-hit thresholds in SCREEN PIXELS. Converted to world meters at click
+# time using the live transform's pixels_per_meter, so click tolerance stays
+# constant regardless of network size or window size.
+INT_CLICK_PX = 15
+LINK_CLICK_PX = 12
+TERMINAL_NODE_CLICK_PX = 10
+TERMINAL_LINK_CLICK_PX = 12
+
 
 def center_x(widget_width):
     """Return x-coordinate to center a widget of given width on the sidebar centerline."""
@@ -44,7 +56,7 @@ def make_transform(network, canvas_width, canvas_height, margin=80):
 
     scale_x = (canvas_width - 2 * margin) / world_w
     scale_y = (canvas_height - 2 * margin) / world_h
-    scale = min(scale_x, scale_y)
+    scale = min(scale_x, scale_y)  # pixels per meter
 
     def world_to_screen(x_m, y_m):
         sx = int((x_m - min_x) * scale + margin)
@@ -56,7 +68,7 @@ def make_transform(network, canvas_width, canvas_height, margin=80):
         wy = (y_px - margin) / scale + min_y
         return wx, wy
 
-    return world_to_screen, screen_to_world
+    return world_to_screen, screen_to_world, scale
 
 
 def safe_int(text, fallback):
@@ -128,6 +140,8 @@ def draw_signal_head(screen, center_x, center_y, approach_angle_rad, phase_state
     pygame.draw.circle(screen, grn_color, (int(grn_pos[0]), int(grn_pos[1])), light_radius)
 
 def main():
+    global SIDEBAR_LEFT, SIDEBAR_INPUT_X, SIDEBAR_CENTER
+
     pygame.init()
     pygame.display.set_caption("Signal Commander")
     info = pygame.display.Info()
@@ -136,6 +150,15 @@ def main():
         pygame.FULLSCREEN | pygame.RESIZABLE,
     )
     clock = pygame.time.Clock()
+
+    # Anchor sidebar to the right edge of the actual display, not the
+    # hardcoded 1400 in the config fallback. All center_x() calls and
+    # widget rects below read these module-level anchors, so setting them
+    # here before any widget is created is what makes the initial layout
+    # right on any resolution.
+    SIDEBAR_LEFT = info.current_w - SIDEBAR_WIDTH
+    SIDEBAR_INPUT_X = SIDEBAR_LEFT + 130
+    SIDEBAR_CENTER = SIDEBAR_LEFT + SIDEBAR_WIDTH // 2
 
     manager = pygame_gui.UIManager((info.current_w, info.current_h))
 
@@ -503,8 +526,9 @@ def main():
     # Initialize transforms before the first frame so the first-frame click
     # handler can call screen_to_world without a NameError. They are
     # recomputed each frame below from the live window size.
+    pixels_per_meter = 1.0
     if network is not None:
-        world_to_screen, screen_to_world = make_transform(
+        world_to_screen, screen_to_world, pixels_per_meter = make_transform(
             network,
             SIDEBAR_LEFT,
             info.current_h,
@@ -534,7 +558,16 @@ def main():
                 if network is not None and mx < SIDEBAR_LEFT:
                     wx, wy = screen_to_world(mx, my)
 
-                    clicked_intersection = network.get_intersection_at_point(wx, wy, threshold=15)
+                    # Convert pixel-radius click targets to world meters using
+                    # the live transform, so click tolerance is constant on
+                    # screen regardless of network size or window size.
+                    m_per_px = 1.0 / max(pixels_per_meter, 1e-6)
+                    int_threshold_m = INT_CLICK_PX * m_per_px
+                    link_threshold_m = LINK_CLICK_PX * m_per_px
+                    tnode_threshold_m = TERMINAL_NODE_CLICK_PX * m_per_px
+                    tlink_threshold_m = TERMINAL_LINK_CLICK_PX * m_per_px
+
+                    clicked_intersection = network.get_intersection_at_point(wx, wy, threshold=int_threshold_m)
                     clicked_link = None
                     clicked_terminal_link = None
 
@@ -543,7 +576,7 @@ def main():
                         for terminal in network.get_terminal_nodes():
                             dx = terminal.x_m - wx
                             dy = terminal.y_m - wy
-                            if (dx * dx + dy * dy) ** 0.5 < 10:
+                            if (dx * dx + dy * dy) ** 0.5 < tnode_threshold_m:
                                 # Find the attached terminal link
                                 for link in network.terminal_links:
                                     if link.from_int.id == terminal.id or link.to_int.id == terminal.id:
@@ -554,7 +587,7 @@ def main():
 
                     # Interior link click (only if no intersection/terminal matched)
                     if clicked_intersection is None and clicked_terminal_link is None:
-                        clicked_link = network.get_link_at_point(wx, wy, threshold=12)
+                        clicked_link = network.get_link_at_point(wx, wy, threshold=link_threshold_m)
 
                     # Also check for direct click on terminal link (line itself)
                     if (clicked_intersection is None
@@ -567,7 +600,7 @@ def main():
                                 wx, wy,
                                 link.from_int.x_m, link.from_int.y_m,
                                 link.to_int.x_m, link.to_int.y_m,
-                                12,
+                                tlink_threshold_m,
                             ):
                                 clicked_terminal_link = link
                                 break
@@ -647,6 +680,7 @@ def main():
 
                     metrics_engine = MetricsEngine()
                     heatmap_enabled = False
+                    heatmap_button.set_text("Heatmap: OFF")
                     pending_webster_recommendation = None
                     sim_time_accumulator = 0.0
                     cached_final_score = None
@@ -898,17 +932,18 @@ def main():
             # Derive canvas dimensions from live window size so everything
             # fits whether fullscreen, windowed, or user-resized.
             window_w, window_h = screen.get_size()
-            canvas_w = SIDEBAR_LEFT 
+            canvas_w = SIDEBAR_LEFT
             canvas_h = window_h
-            world_to_screen, screen_to_world = make_transform(
+            world_to_screen, screen_to_world, pixels_per_meter = make_transform(
                 network,
                 canvas_w,
                 canvas_h,
-                margin=80
+                margin=80,
             )
         else:
             world_to_screen = None
             screen_to_world = None
+            pixels_per_meter = 1.0
 
         screen.fill(BG_COLOR)
         window_w, window_h = screen.get_size()
@@ -1101,11 +1136,12 @@ def main():
             # Expanded overlay: 500x380 for score breakdown
             overlay_w = 500
             overlay_h = 380
-            # Center on the canvas area (not the full window)
-            window_w, _window_h = screen.get_size()
+            # Center on the canvas area, using the LIVE window size so the
+            # overlay tracks the actual display instead of the config fallback.
+            window_w, window_h = screen.get_size()
             canvas_w = SIDEBAR_LEFT
             overlay_x = (canvas_w - overlay_w) // 2
-            overlay_y = (CANVAS_HEIGHT - overlay_h) // 2
+            overlay_y = (window_h - overlay_h) // 2
 
             # Dark translucent background
             overlay_surface = pygame.Surface((overlay_w, overlay_h), pygame.SRCALPHA)
@@ -1161,15 +1197,21 @@ def main():
             )
             screen.blit(breakdown_label, breakdown_rect)
 
-            # 3x3 grid of intersection scores (matches network layout)
+            # Per-intersection grid — sized to the actual network, not a
+            # hardcoded 3x3. Cell widths shrink to fit larger networks so
+            # the overlay never overflows.
             int_scores = cached_final_score["intersection_scores"]
-            grid_start_x = overlay_x + 80
+            rows = network.rows if network is not None else 0
+            cols = network.cols if network is not None else 0
+            grid_area_w = overlay_w - 40
+            grid_area_h = overlay_h - 260
+            grid_cell_w = min(115, grid_area_w // max(cols, 1))
+            grid_cell_h = min(30, grid_area_h // max(rows, 1))
+            grid_start_x = overlay_x + (overlay_w - grid_cell_w * max(cols, 1)) // 2
             grid_start_y = overlay_y + 230
-            grid_cell_w = 115
-            grid_cell_h = 30
 
-            for row in range(3):
-                for col in range(3):
+            for row in range(rows):
+                for col in range(cols):
                     iid = f"I_{row}_{col}"
                     score = int_scores.get(iid)
                     cell_x = grid_start_x + col * grid_cell_w
