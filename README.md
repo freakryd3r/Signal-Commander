@@ -48,7 +48,8 @@ rendering, and conversion happens at display time through the `world_to_screen` 
 - Live traffic microsimulation: per-vehicle car-following, signal compliance at stop
   lines, queue formation, and trip completion.
 - Six-phase signal state machine per intersection (NS green, NS yellow, all-red, EW
-  green, EW yellow, all-red) with editable cycle length, green splits, and offset.
+  green, EW yellow, all-red) with editable green splits and offset. Cycle length
+  is derived from the greens plus a fixed 10 s of intergreen.
 - Origin–destination demand with editable per-entry inflow (veh/hr) and a demand scale.
 - Preset scenarios in `debug.py`, including an AM-peak commute pattern into a notional
   northeast CBD, plus a small multi-car debug case with a headless terminal runner.
@@ -61,7 +62,8 @@ rendering, and conversion happens at display time through the `world_to_screen` 
 - Live network metrics: completed trips, active vehicles, mean delay, mean and 85th
   percentile travel time, and denied entries.
 - End-of-run scoring: each intersection is graded against its Webster-optimal timing,
-  averaged into a 0–100 network score with a rating and a per-intersection breakdown.
+  averaged into a 0–110 network score (values above 100 mean the network beat
+  Webster on average) with a rating and a per-intersection breakdown.
 - CSV export of per-intersection and network-level metrics.
 
 ## Project structure
@@ -115,8 +117,9 @@ The window is split into a canvas (left) and a sidebar (right).
 
 - **Create Network:** set Rows, Columns, and Link Length, then press Create Network to
   rebuild the grid.
-- **Edit an intersection:** click it (light circle) to edit Cycle, Green NS, Green EW,
-  and Offset, then press Apply.
+- **Edit an intersection:** click it (light circle) to edit Green NS, Green EW, and
+  Offset, then press Apply. The derived Cycle length is shown read-only in the
+  info label.
 - **Edit a link:** click it to edit Length and Lanes, then press Apply.
 - **Edit demand:** click an inbound terminal to set its Inflow (veh/hr).
 - **Run the sim:** Start, Pause, Reset, and speed buttons 1x / 5x / 20x / 60x.
@@ -149,7 +152,8 @@ per-cycle flows using equivalent-flow lane groups (`q_eq = q_through + 1.4·q_ri
 eL·q_left`, saturation 1900 veh/hr per critical lane), Webster delay, and LOS (with an
 escalation when queues indicate oversaturation). At the end of a run,
 `compute_network_score` compares each intersection's delay under your timing against its
-delay under Webster-optimal timing and averages the results into a 0–100 score.
+delay under Webster-optimal timing and averages the results into a 0–110 score
+(cubic mapping; the 100–110 band signals that the user beat Webster).
 
 ## Configuration
 
@@ -160,7 +164,8 @@ Key constants live in `config.py`:
 - Network defaults: `DEFAULT_ROWS` 3, `DEFAULT_COLS` 3, default link length, default lanes.
 - Traffic engineering: `SATURATION_FLOW_VPH` 1900 veh/hr per critical lane,
   free-flow speed 15 m/s.
-- Simulation: `TIMESTEP` 1.0 s, `WARMUP_DURATION` 180 s, `ROLLING_WINDOW` 300 s.
+- Simulation: `TIMESTEP` 1.0 s, `SIM_DURATION_S` 3600 s, `WARMUP_DURATION` 180 s,
+  `ROLLING_WINDOW_S` 300 s.
 
 
 ## Status and ideas

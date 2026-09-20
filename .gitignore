@@ -5,3 +5,9 @@ __pycache__/
 .idea/
 .DS_Store
 *.csv
+
+# Local-only planning / audit / assistant docs — kept out of the repo.
+CLAUDE.md
+FIXLIST.md
+AUDIT*.md
+.claude/
