@@ -487,6 +487,20 @@ def main():
         clear_fields()
         status_label.set_text("")
 
+    # Initialize transforms before the first frame so the first-frame click
+    # handler can call screen_to_world without a NameError. They are
+    # recomputed each frame below from the live window size.
+    if network is not None:
+        world_to_screen, screen_to_world = make_transform(
+            network,
+            SIDEBAR_LEFT,
+            info.current_h,
+            margin=80,
+        )
+    else:
+        world_to_screen = None
+        screen_to_world = None
+
     running = True
     while running:
         dt = clock.tick(FPS) / 1000.0
@@ -625,6 +639,8 @@ def main():
                     cached_final_score = None
                     selected_intersection = None
                     selected_link = None
+                    last_metrics_update_s = -1.0
+                    cached_intersection_metrics = {}
                     info_label.set_text("Network created. Click an intersection or link.")
                     clear_selection_ui()
                     status_label.set_text("Network created (paused)")
@@ -641,9 +657,10 @@ def main():
                     status_label.set_text("Simulation paused")
 
                 if event.ui_element == reset_button and sim is not None:
-                    # Full reset: clear agents and restart the scenario.
-                    # Rebuild the debug scenario so cars re-spawn at t=0 and t=3.
-                    network, sim = setup_am_peak()
+                    # Full reset: clear agents and dynamic sim state on the
+                    # current network. Custom timings, lanes, and inflows
+                    # are preserved.
+                    sim.reset_simulation()
                     sim.pause()
                     sim.set_speed(1)
                     metrics_engine = MetricsEngine()
@@ -652,6 +669,8 @@ def main():
                     cached_final_score = None
                     selected_intersection = None
                     selected_link = None
+                    last_metrics_update_s = -1.0
+                    cached_intersection_metrics = {}
                     status_label.set_text("Simulation reset (paused)")
 
                 if event.ui_element == realtime_button and sim is not None:

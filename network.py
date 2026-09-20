@@ -487,17 +487,6 @@ class Network:
 
     def update_link_length(self, link_id, new_length):
         target_link = self.get_link_by_id(link_id)
-    
-    def update_inflow_vph(self, link_id, new_vph):
-        """
-        Set the inflow rate for an inbound terminal link.
-        Ignored if the link is not an inbound terminal.
-        """
-        for link in self.terminal_links:
-            if link.id == link_id and link.in_or_out == "in":
-                link.inflow_vph = max(0.0, float(new_vph))
-                return True
-        return False
 
         if target_link is None:
             return
@@ -536,6 +525,17 @@ class Network:
 
             self.rebuild_geometry()
             return
+
+    def update_inflow_vph(self, link_id, new_vph):
+        """
+        Set the inflow rate for an inbound terminal link.
+        Ignored if the link is not an inbound terminal.
+        """
+        for link in self.terminal_links:
+            if link.id == link_id and link.in_or_out == "in":
+                link.inflow_vph = max(0.0, float(new_vph))
+                return True
+        return False
 
     def update_lanes(self, link_id, lanes):
         # Lane count affects calculation only, not drawing geometry.
