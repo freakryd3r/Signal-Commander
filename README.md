@@ -51,11 +51,11 @@ rendering, and conversion happens at display time through the `world_to_screen` 
   green, EW yellow, all-red) with editable cycle length, green splits, and offset.
 - Origin–destination demand with editable per-entry inflow (veh/hr) and a demand scale.
 - Preset scenarios in `debug.py`, including an AM-peak commute pattern into a notional
-  northeast CBD, plus a single-car debug case with a headless terminal runner.
+  northeast CBD, plus a small multi-car debug case with a headless terminal runner.
 - Build-your-own networks at runtime: set rows, columns, and link length, then
   regenerate the grid.
-- Live visualization: animated cars and buses, per-approach signal heads (red/yellow/
-  green), color-coded Level of Service badges above each intersection, and an optional
+- Live visualization: animated cars, per-approach signal heads (red/yellow/green),
+  color-coded Level of Service badges above each intersection, and an optional
   link-density heatmap.
 - Adjustable simulation speed (1x / 5x / 20x / 60x) with Start, Pause, and Reset.
 - Live network metrics: completed trips, active vehicles, mean delay, mean and 85th
@@ -91,7 +91,7 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Dependencies: `pygame-ce`, `pygame_gui`, `networkx`, `numpy`, `matplotlib`.
+Dependencies: `pygame-ce`, `pygame_gui`, `networkx`, `numpy`.
 
 ## Running
 
@@ -121,6 +121,7 @@ The window is split into a canvas (left) and a sidebar (right).
 - **Edit demand:** click an inbound terminal to set its Inflow (veh/hr).
 - **Run the sim:** Start, Pause, Reset, and speed buttons 1x / 5x / 20x / 60x.
 - **Views:** toggle the density Heatmap, and Export CSV at any time.
+- **Fullscreen:** press `Esc` to toggle between fullscreen and windowed mode.
 
 Invalid edits are rejected with a status message and the previous values are kept.
 
@@ -131,10 +132,13 @@ outbound terminal. Each step sets a vehicle's speed from the gap to its leader a
 the next downstream signal, then advances it. The run lasts 3600 s with a 180 s warmup
 (excluded from reported metrics) and a 300 s rolling window for live readouts.
 
-**Signals.** Each intersection cycles through six phases with durations from its
-`cycle_length`, `green_ns`, and `green_ew`, plus fixed yellow (3 s) and all-red (2 s).
-A per-intersection `offset` delays the first phase so corridors can be coordinated.
-Timing changes are applied at the start of NS green so a cycle is never cut mid-phase.
+**Signals.** Each intersection cycles through six phases with durations set by its
+`green_ns` and `green_ew`, plus fixed yellow (3 s) and all-red (2 s) intergreens.
+The cycle length is derived: `cycle = green_ns + green_ew + 10 s`, so there is no
+separate Cycle input and the scored cycle always equals the played cycle. A
+per-intersection `offset` delays the first phase so corridors can be coordinated.
+Timing edits are only allowed while the sim is paused and take effect on the
+next step.
 
 **Routing.** `Network.shortest_path(origin, dest, rng)` builds a temporary weighted graph
 each call, perturbs every edge weight by ±10%, and runs Dijkstra, giving per-vehicle
@@ -154,8 +158,8 @@ Key constants live in `config.py`:
 - Display: `WINDOW_WIDTH` 1400, `WINDOW_HEIGHT` 1000, `SIDEBAR_WIDTH` 300, `FPS` 30.
   These are fallbacks; at runtime the app uses the live fullscreen window size.
 - Network defaults: `DEFAULT_ROWS` 3, `DEFAULT_COLS` 3, default link length, default lanes.
-- Traffic engineering: `SATURATION_FLOW` 1800 veh/hr/lane, `STARTUP_LOST_TIME` 2.0 s,
-  free-flow speed.
+- Traffic engineering: `SATURATION_FLOW_VPH` 1900 veh/hr per critical lane,
+  free-flow speed 15 m/s.
 - Simulation: `TIMESTEP` 1.0 s, `WARMUP_DURATION` 180 s, `ROLLING_WINDOW` 300 s.
 
 

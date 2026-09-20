@@ -28,10 +28,10 @@ from simulation import Simulation
 
 def setup_debug_one_car():
     """
-    Build the standard Phase 2 debug scenario.
+    Small debug scenario for validating the simulation engine.
 
-    Two cars, same route: west entry on row 1 → east exit on row 1.
-    Car A spawns at t=0. Car B spawns at t=3.
+    Five cars on the same route: west entry on row 1 → east exit on row 1,
+    scheduled one second apart at t = 0, 1, 2, 3, 4.
 
     Returns (network, sim). Simulation is left PAUSED; caller must
     call sim.resume() to start.
@@ -107,7 +107,6 @@ def setup_am_peak():
 
     return network, sim
 
-    return network, sim
 
 # ============================================================
 # Headless runner — prints movement to terminal for validation
@@ -115,7 +114,7 @@ def setup_am_peak():
 
 def run_debug_one_car_headless(total_sim_seconds=45, print_interval_s=1.0):
     """
-    Run the one-car scenario without pygame; print positions.
+    Run the debug scenario without pygame and print per-second positions.
     Useful for confirming simulation.py works in isolation.
     """
     network, sim = setup_debug_one_car()
@@ -126,7 +125,7 @@ def run_debug_one_car_headless(total_sim_seconds=45, print_interval_s=1.0):
     last_print_t = -1.0
 
     print("=" * 60)
-    print("Debug scenario: one car t=0, one car t=3")
+    print("Debug scenario: 5 cars spawned at t = 0, 1, 2, 3, 4")
     print("=" * 60)
 
     # Show route once at the top

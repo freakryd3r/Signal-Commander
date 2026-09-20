@@ -69,14 +69,14 @@ from typing import Deque, Dict, List, Tuple, Optional, Any
 
 import numpy as np
 
+from config import SATURATION_FLOW_VPH, ROLLING_WINDOW_S
+
 
 # =============================================================================
 # CONSTANTS
 # =============================================================================
 
-SAT_FLOW = 1900.0  # veh/hr per critical lane
-WARMUP_TIME_S = 180.0
-ROLLING_WINDOW_S = 300.0
+SAT_FLOW = float(SATURATION_FLOW_VPH)  # veh/hr per critical lane
 
 RIGHT_TURN_EQUIV = 1.4
 PROTECTED_LEFT_EQUIV = 1.6

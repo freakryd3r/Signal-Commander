@@ -4,12 +4,13 @@ import math
 import os
 from datetime import datetime
 from simulation import Simulation
-from debug import setup_debug_one_car, setup_am_peak
-from metrics import MetricsEngine, websters_optimal_cycle_simple, compute_network_score
+from debug import setup_am_peak
+from metrics import MetricsEngine, compute_network_score
 from config import (
-    WINDOW_WIDTH, WINDOW_HEIGHT, SIDEBAR_WIDTH, CANVAS_WIDTH,
-    CANVAS_HEIGHT, FPS, BG_COLOR, GRID_BG, LINK_COLOR,
-    INTERSECTION_COLOR, DEFAULT_LINK_LENGTH_M, INTERGREEN_S
+    WINDOW_WIDTH, WINDOW_HEIGHT, SIDEBAR_WIDTH,
+    FPS, BG_COLOR, GRID_BG, LINK_COLOR,
+    INTERSECTION_COLOR, DEFAULT_LINK_LENGTH_M, INTERGREEN_S,
+    SIM_DURATION_S,
 )
 from network import Network
 
@@ -76,10 +77,7 @@ def safe_int(text, fallback):
         return int(text)
     except:
         return fallback
-    
-def center_x(widget_width):
-    """Return x-coordinate to center a widget on the sidebar centerline."""
-    return SIDEBAR_LEFT + SIDEBAR_WIDTH // 2 - widget_width // 2
+
 
 def draw_signal_head(screen, center_x, center_y, approach_angle_rad, phase_state):
     """
@@ -162,6 +160,19 @@ def main():
 
     manager = pygame_gui.UIManager((info.current_w, info.current_h))
 
+    # Pre-create fonts once — SysFont per frame allocates a new font object
+    # every tick, which is wasteful. All render loops below reuse these.
+    los_font = pygame.font.SysFont("Arial", 18, bold=True)
+    try:
+        header_title_font = pygame.font.SysFont("Impact", 32, bold=False)
+    except Exception:
+        header_title_font = pygame.font.SysFont("Arial", 32, bold=False)
+    overlay_title_font = pygame.font.SysFont("Arial", 22, bold=False)
+    overlay_score_font = pygame.font.SysFont("Impact", 58, bold=False)
+    overlay_rating_font = pygame.font.SysFont("Arial", 22, bold=False)
+    overlay_small_font = pygame.font.SysFont("Arial", 14)
+    overlay_grid_font = pygame.font.SysFont("Arial", 14)
+
     # Setup title label (centered)
     setup_title_label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((center_x(60), 50), (160, 32)),
@@ -173,7 +184,6 @@ def main():
     sim.pause()
     metrics_engine = MetricsEngine()
     heatmap_enabled = False
-    pending_webster_recommendation = None
 
     METRICS_UPDATE_INTERVAL_S = 10.0
     last_metrics_update_s = -1.0
@@ -340,7 +350,7 @@ def main():
 
     sim_status_label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((center_x(SIDEBAR_WIDTH + 50), 585), (SIDEBAR_WIDTH + 150, 24)),
-        text="PAUSED | t = 0.0s / 3600s | Speed: 1x",
+        text=f"PAUSED | t = 0.0s / {int(SIM_DURATION_S)}s | Speed: 1x",
         manager=manager
     )
 
@@ -622,16 +632,6 @@ def main():
                         info_label.set_text(f"Link: {selected_link.id}")
                         load_link_fields(selected_link)
 
-                    elif clicked_terminal_link is not None:
-                        info_label.set_text(f"Terminal: {clicked_terminal_link.id}")
-                        load_terminal_fields(clicked_terminal_link)
-                        last_metrics_update_s = -1.0
-
-                    elif selected_link is not None:
-                        info_label.set_text(f"Link: {selected_link.id}")
-                        load_link_fields(selected_link)
-                        last_metrics_update_s = -1.0
-
                     else:
                         info_label.set_text("Click an intersection, link, or terminal")
                         clear_selection_ui()
@@ -681,7 +681,6 @@ def main():
                     metrics_engine = MetricsEngine()
                     heatmap_enabled = False
                     heatmap_button.set_text("Heatmap: OFF")
-                    pending_webster_recommendation = None
                     sim_time_accumulator = 0.0
                     cached_final_score = None
                     selected_intersection = None
@@ -711,7 +710,6 @@ def main():
                     sim.pause()
                     sim.set_speed(1)
                     metrics_engine = MetricsEngine()
-                    pending_webster_recommendation = None
                     sim_time_accumulator = 0.0
                     cached_final_score = None
                     selected_intersection = None
@@ -818,20 +816,6 @@ def main():
                             load_terminal_fields(selected_link)
                             status_label.set_text("Inflow updated")
 
-                    elif current_mode == "link" and selected_link is not None:
-                        length_m = safe_int(field1_input.get_text(), int(selected_link.length_m))
-                        lanes = safe_int(field2_input.get_text(), selected_link.lanes)
-
-                        if length_m <= 0:
-                            status_label.set_text("Length must be > 0")
-                        elif lanes <= 0:
-                            status_label.set_text("Lanes must be > 0")
-                        else:
-                            network.update_link_length(selected_link.id, length_m)
-                            network.update_lanes(selected_link.id, lanes)
-                            load_link_fields(selected_link)
-                            status_label.set_text("Link updated")
-
             manager.process_events(event)
 
         manager.update(dt)
@@ -846,7 +830,7 @@ def main():
             else:
                 running_text = "PAUSED"
             sim_status_label.set_text(
-                f"{running_text}  |  t = {sim.state.time_s:.1f}s / 3600s  |  Speed: {sim.speed_multiplier}x"
+                f"{running_text}  |  t = {sim.state.time_s:.1f}s / {int(SIM_DURATION_S)}s  |  Speed: {sim.speed_multiplier}x"
             )
 
         # Refresh metric panels every METRICS_UPDATE_INTERVAL_S simulated seconds
@@ -1049,7 +1033,6 @@ def main():
             # Uses the cached_intersection_metrics which refreshes every
             # METRICS_UPDATE_INTERVAL_S sim-seconds.
             los_badge_offset_px = 45  # how far above the intersection center
-            los_font = pygame.font.SysFont("Arial", 18, bold=True)
 
             for inter in network.intersections:
                 im = cached_intersection_metrics.get(inter.id)
@@ -1070,14 +1053,9 @@ def main():
         manager.draw_ui(screen)
 
         # ===== Title rendering: SIGNAL COMMANDER =====
-        try:
-            title_font = pygame.font.SysFont("Impact", 32, bold=False)
-        except Exception:
-            title_font = pygame.font.SysFont("Arial", 32, bold=False)
-
         # Shadow layer — slight offset, subtle dark color
-        shadow = title_font.render("SIGNAL COMMANDER", True, (30, 30, 35))
-        title_surface = title_font.render("SIGNAL COMMANDER", True, (240, 200, 60))
+        shadow = header_title_font.render("SIGNAL COMMANDER", True, (30, 30, 35))
+        title_surface = header_title_font.render("SIGNAL COMMANDER", True, (240, 200, 60))
 
         title_x = title_x = SIDEBAR_LEFT + (SIDEBAR_WIDTH - title_surface.get_width()) // 2 + 40
         title_y = 7
@@ -1156,40 +1134,33 @@ def main():
                 3,
             )
 
-            # Font setup
-            title_font = pygame.font.SysFont("Arial", 22, bold=False)
-            score_font = pygame.font.SysFont("Impact", 58, bold=False)
-            rating_font = pygame.font.SysFont("Arial", 22, bold=False)
-            small_font = pygame.font.SysFont("Arial", 14)
-            grid_font = pygame.font.SysFont("Arial", 14)
-
             # Title
-            title = title_font.render("SIMULATION COMPLETE", True, (255, 255, 255))
+            title = overlay_title_font.render("SIMULATION COMPLETE", True, (255, 255, 255))
             title_rect = title.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 30))
             screen.blit(title, title_rect)
 
             # Big score number
             score_text = f"{int(round(cached_final_score['network_score']))}"
-            score_surface = score_font.render(score_text, True, cached_final_score["color"])
+            score_surface = overlay_score_font.render(score_text, True, cached_final_score["color"])
             score_rect = score_surface.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 95))
             screen.blit(score_surface, score_rect)
 
             # "/ 100" subtitle
-            score_sub = small_font.render("/ 100", True, (180, 180, 190))
+            score_sub = overlay_small_font.render("/ 100", True, (180, 180, 190))
             score_sub_rect = score_sub.get_rect(
                 center=(overlay_x + overlay_w // 2, overlay_y + 140)
             )
             screen.blit(score_sub, score_sub_rect)
 
             # Rating text
-            rating = rating_font.render(
+            rating = overlay_rating_font.render(
                 cached_final_score["rating"], True, cached_final_score["color"]
             )
             rating_rect = rating.get_rect(center=(overlay_x + overlay_w // 2, overlay_y + 170))
             screen.blit(rating, rating_rect)
 
             # Per-intersection breakdown header
-            breakdown_label = small_font.render(
+            breakdown_label = overlay_small_font.render(
                 "Per-intersection scores:", True, (200, 200, 210)
             )
             breakdown_rect = breakdown_label.get_rect(
@@ -1234,11 +1205,11 @@ def main():
                         else:
                             color = (255, 60, 60)
 
-                    cell_surface = grid_font.render(text, True, color)
+                    cell_surface = overlay_grid_font.render(text, True, color)
                     screen.blit(cell_surface, (cell_x, cell_y))
 
             # Footer: reset instruction
-            footer = small_font.render(
+            footer = overlay_small_font.render(
                 "Click Reset to try again", True, (200, 200, 210)
             )
             footer_rect = footer.get_rect(
