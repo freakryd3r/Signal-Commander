@@ -1180,6 +1180,7 @@ class Simulation:
             # on the agent for state continuity.
             prev_pos = getattr(agent, "_prev_position_on_link_m", None)
             prev_link_id = getattr(agent, "_prev_link_id", None)
+            prev_link_idx = getattr(agent, "_prev_link_idx", None)
 
             same_link = prev_link_id == link.id
             if same_link and prev_pos is not None:
@@ -1191,19 +1192,41 @@ class Simulation:
                 # is now past it)
                 if prev_dist > 0 and dist_to_stop <= 0:
                     istate.departures_this_step[approach] += 1
-            elif not same_link:
-                # Agent just transitioned to this link from upstream.
-                # If it spawned right on or past the detection zone it counts
-                # as an arrival. Most common case: agents coming from another
-                # link in the route, so they appear at position 0, which means
-                # dist_to_stop = link.length_m - STOP_LINE_OFFSET_M. That's
-                # almost certainly outside the 50m zone on any real link, so
-                # no arrival counted here. Correct behavior.
-                pass
+            elif not same_link and prev_link_id is not None:
+                # Agent crossed at least one link end this tick, so its
+                # current link is downstream of the intersection(s) whose
+                # stop line(s) it just crossed. The same-link branch above
+                # can't see those crossings because they happened on links
+                # that aren't the agent's current link anymore. Attribute
+                # a departure to each traversed-through intersection here.
+                if prev_link_idx is None:
+                    prev_link_idx = agent.current_link_idx - 1
+                for i in range(prev_link_idx, agent.current_link_idx):
+                    crossed_link = agent.route[i]
+                    crossed_int = crossed_link.to_int
+                    if crossed_int.is_terminal:
+                        continue
+                    crossed_istate = self.state.intersections.get(crossed_int.id)
+                    if crossed_istate is None:
+                        continue
+                    crossed_approach = _approach_direction_for_link(crossed_link)
+                    if crossed_approach is None:
+                        continue
+                    crossed_istate.departures_this_step[crossed_approach] += 1
+                    # Arrival zone sweep on the immediately-previous link:
+                    # if the agent started this tick outside the 50 m zone
+                    # and ended past the stop line, it also swept through
+                    # the arrival zone in the same tick.
+                    if i == prev_link_idx and prev_pos is not None:
+                        prev_stop_line_pos = crossed_link.length_m - STOP_LINE_OFFSET_M
+                        prev_dist = prev_stop_line_pos - prev_pos
+                        if prev_dist > QUEUE_DETECTION_ZONE_M:
+                            crossed_istate.arrivals_this_step[crossed_approach] += 1
 
             # Track for next tick
             agent._prev_position_on_link_m = agent.position_on_link_m
             agent._prev_link_id = link.id
+            agent._prev_link_idx = agent.current_link_idx
 
         # Append non-zero this-step counts to the cumulative logs,
         # and accumulate departures for the current signal cycle.
