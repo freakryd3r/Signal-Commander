@@ -588,6 +588,8 @@ class Simulation:
             istate.current_phase = "NS_GREEN"
             istate.time_in_phase_s = 0.0
             istate.cycle_start_time_s = 0.0
+            istate.pending_green_ns_s = None
+            istate.pending_green_ew_s = None
             for d in ("N", "S", "E", "W"):
                 istate.arrivals_by_approach[d].clear()
                 istate.departures_by_approach[d].clear()
@@ -595,12 +597,17 @@ class Simulation:
                 istate.departures_this_step[d] = 0
                 istate.last_cycle_flows[d] = 0.0
                 istate.queue_lengths[d] = 0
+                istate.cycle_departures_accum[d] = 0
 
         # Reset link state
         for lstate in self.state.links.values():
             lstate.num_vehicles = 0
             lstate.density_veh_per_km = 0.0
             lstate.mean_speed_ms = 0.0
+
+        # Clear virtual queues (pending agents waiting for source room)
+        for origin_id in self._virtual_queue:
+            self._virtual_queue[origin_id] = 0
 
     # ----------------- Read API -----------------
 
@@ -804,50 +811,86 @@ class Simulation:
 
     def _generate_poisson_arrivals(self, dt):
         """
-        For every (origin, destination) in the OD matrix, draw a Bernoulli
-        per tick with probability = rate_per_s × dt × demand_scale. If it
-        fires, try to spawn.
+        Bernoulli per tick per demand source.
+
+        Per-origin behavior: if any inbound terminal at an origin has
+        inflow_vph > 0, those manual overrides drive spawning at that origin
+        and its OD row is used only for destination weighting. Otherwise the
+        OD row drives spawning per (origin, dest) pair as usual. This way
+        setting one terminal's inflow does not silently discard OD demand
+        at other origins.
         """
         if self.demand_scale == 0.0:
             return
 
-        # Collect inbound terminal links with positive inflow
-        active_terminals = [
-            lnk for lnk in self.network.terminal_links
-            if lnk.in_or_out == "in" and lnk.inflow_vph > 0
-        ]
+        # Collect manual inflow overrides by origin.
+        overrides_by_origin: Dict[str, list] = {}
+        for lnk in self.network.terminal_links:
+            if lnk.in_or_out != "in" or lnk.inflow_vph <= 0:
+                continue
+            overrides_by_origin.setdefault(lnk.to_int.id, []).append(lnk)
 
-        # If user hasn't set any inflows, fall back to OD matrix
-        if not active_terminals:
-            if not self.od_matrix:
-                return
-            for origin_id, dests in self.od_matrix.items():
-                for dest_id, rate_vph in dests.items():
-                    rate_per_s = rate_vph / 3600.0
-                    p = rate_per_s * dt * self.demand_scale
-                    p = min(p, 1.0)
-                    if self.rng.random() < p:
-                        self._try_spawn_od(origin_id, dest_id)
-            return
+        # OD-driven origins (no manual override): per-(origin,dest) Bernoulli.
+        for origin_id, dests in self.od_matrix.items():
+            if origin_id in overrides_by_origin:
+                continue
+            for dest_id, rate_vph in dests.items():
+                rate_per_s = rate_vph / 3600.0
+                p = min(1.0, rate_per_s * dt * self.demand_scale)
+                if self.rng.random() < p:
+                    self._try_spawn_od(origin_id, dest_id)
 
-        # Per-terminal Poisson spawning with uniform destination selection
-        perimeter_ids = [
-            inter.id for inter in self.network.intersections
-            if self.network.is_perimeter(inter.id)
-        ]
-
-        for inbound_link in active_terminals:
-            origin_id = inbound_link.to_int.id  # perimeter intersection
-            rate_per_s = inbound_link.inflow_vph / 3600.0
-            p = rate_per_s * dt * self.demand_scale
-            p = min(p, 1.0)
-            if self.rng.random() < p:
-                # Pick a destination uniformly from other perimeter intersections
-                candidates = [iid for iid in perimeter_ids if iid != origin_id]
-                if not candidates:
+        # Manually-overridden origins: one Bernoulli per inbound terminal.
+        perimeter_ids = None
+        for origin_id, inbound_links in overrides_by_origin.items():
+            # Destination distribution: OD row if present, else uniform over
+            # other perimeter intersections.
+            od_row = self.od_matrix.get(origin_id, {})
+            if od_row and sum(od_row.values()) > 0:
+                dest_ids = list(od_row.keys())
+                weights = np.array([od_row[d] for d in dest_ids], dtype=float)
+                weights = weights / weights.sum()
+            else:
+                if perimeter_ids is None:
+                    perimeter_ids = [
+                        inter.id for inter in self.network.intersections
+                        if self.network.is_perimeter(inter.id)
+                    ]
+                dest_ids = [iid for iid in perimeter_ids if iid != origin_id]
+                if not dest_ids:
                     continue
-                dest_id = candidates[int(self.rng.integers(0, len(candidates)))]
-                self._try_spawn_od(origin_id, dest_id)
+                weights = np.full(len(dest_ids), 1.0 / len(dest_ids))
+
+            for inbound_link in inbound_links:
+                rate_per_s = inbound_link.inflow_vph / 3600.0
+                p = min(1.0, rate_per_s * dt * self.demand_scale)
+                if self.rng.random() < p:
+                    dest_id = self.rng.choice(dest_ids, p=weights)
+                    self._try_spawn_od(origin_id, dest_id)
+
+    def effective_inflow_vph(self, inbound_link):
+        """
+        Return the vehicles-per-hour the given inbound terminal is actually
+        producing. If the terminal has a manual override, that's the number.
+        Otherwise, compute the OD-derived contribution: the origin's total
+        OD outflow divided evenly across its inbound terminal links.
+        """
+        if inbound_link is None or inbound_link.in_or_out != "in":
+            return 0.0
+        if inbound_link.inflow_vph > 0:
+            return float(inbound_link.inflow_vph)
+        origin_id = inbound_link.to_int.id
+        od_row = self.od_matrix.get(origin_id, {})
+        total = float(sum(od_row.values()))
+        if total <= 0:
+            return 0.0
+        inbound_count = sum(
+            1 for lnk in self.network.terminal_links
+            if lnk.in_or_out == "in" and lnk.to_int.id == origin_id
+        )
+        if inbound_count == 0:
+            return 0.0
+        return total / inbound_count
 
     # ----------------- Main step -----------------
 
@@ -867,6 +910,24 @@ class Simulation:
         if self.state.sim_completed:
             return
 
+        # Process scheduled spawns before advancing time so a spawn queued
+        # for spawn_time_s=t actually fires when sim time IS t, not one
+        # tick later. If a scheduled spawn cannot fit (source has no room),
+        # requeue it for the next tick instead of dropping it.
+        deferred = []
+        while self._scheduled_spawns and self._scheduled_spawns[0][0] <= self.state.time_s:
+            spawn_time, route, agent_type = self._scheduled_spawns.pop(0)
+            if not route:
+                continue
+            origin_id = route[0].to_int.id
+            if self._source_has_room(origin_id):
+                self.spawn_agent(route, agent_type)
+            else:
+                deferred.append((self.state.time_s + dt, route, agent_type))
+        if deferred:
+            self._scheduled_spawns.extend(deferred)
+            self._scheduled_spawns.sort(key=lambda t: t[0])
+
         self.state.dt_s = dt
         self.state.time_s += dt
         self.state.warmup_complete = self.state.time_s >= WARMUP_DURATION
@@ -884,11 +945,6 @@ class Simulation:
             for d in ("N", "S", "E", "W"):
                 istate.arrivals_this_step[d] = 0
                 istate.departures_this_step[d] = 0
-
-        # 2. Process scheduled spawns
-        while self._scheduled_spawns and self._scheduled_spawns[0][0] <= self.state.time_s:
-            _, route, agent_type = self._scheduled_spawns.pop(0)
-            self.spawn_agent(route, agent_type)
         # 2b. Generate Poisson OD arrivals (Phase 7)
         self._generate_poisson_arrivals(dt)
 
@@ -1001,15 +1057,20 @@ class Simulation:
         best_leader = None
         best_gap = float("inf")
 
-        # 1. Leaders on the same link, ahead of me
+        # 1. Leaders on the same link, ahead of me. Position ties are broken
+        # by agent id — the lower-id (earlier-spawned) agent is "ahead", so
+        # the higher-id one sees it as a leader and must yield. This prevents
+        # co-located agents from ignoring each other forever.
         for other in self.agents:
             if other is agent or not other.active:
                 continue
             other_link = other.current_link()
             if other_link is None or other_link.id != my_link.id:
                 continue
-            if other.position_on_link_m <= agent.position_on_link_m:
-                continue  # behind me, ignore
+            if other.position_on_link_m < agent.position_on_link_m:
+                continue
+            if other.position_on_link_m == agent.position_on_link_m and other.id >= agent.id:
+                continue
             # Bumper-to-bumper gap: leader's tail minus my nose
             gap = (other.position_on_link_m - other.length_m) - agent.position_on_link_m
             if gap < best_gap:

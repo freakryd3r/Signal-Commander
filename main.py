@@ -448,13 +448,24 @@ def main():
         nonlocal current_mode
         current_mode = "terminal"
 
-        object_type_label.set_text("Type: Inbound Terminal")
+        # Effective demand shown in the type label. If the terminal has no
+        # manual override, this reflects the OD-derived contribution so the
+        # user sees what the scenario is actually sending through this
+        # terminal, not just the (zero) override.
+        effective_vph = 0.0
+        if sim is not None:
+            effective_vph = sim.effective_inflow_vph(terminal_link)
+        source = "manual" if terminal_link.inflow_vph > 0 else "OD"
+        object_type_label.set_text(
+            f"Type: Inbound Terminal  (effective {int(effective_vph)} veh/hr, {source})"
+        )
 
         field1_label.set_text("Inflow (veh/hr)")
         field2_label.set_text("")
         field3_label.set_text("")
         field4_label.set_text("")
 
+        # Manual override value only — 0 means "no override, use OD".
         field1_input.set_text(str(int(terminal_link.inflow_vph)))
         field2_input.set_text("")
         field3_input.set_text("")
